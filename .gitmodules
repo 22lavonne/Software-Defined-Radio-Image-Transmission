@@ -1,0 +1,3 @@
+[submodule "Image-Detection/red-circle-detection"]
+	path = Image-Detection/red-circle-detection
+	url = https://github.com/ChristophRahn/red-circle-detection
