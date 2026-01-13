@@ -1,20 +1,19 @@
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, render_template
 import os
 
 app = Flask(__name__)
 
-IMAGE_FOLDER = "photo_site/photos"
+#IMAGE_FOLDER = "photo_site/photos"
+IMAGE_FOLDER = "static"
 
 @app.route("/")
 def index():
-    files = os.listdir(IMAGE_FOLDER)
-    images = [f for f in files if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
+    files = os.path.join(app.static_folder, "images")
+    print("Image directory:", files)
+    print("Files found:", os.listdir(files))
+    image_files = [f for f in os.listdir(files) if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
 
-    html = "<h1>Quick and Dirty</h1>"
-    for img in images:
-        html += f'<img src="/image/{img}" style="max-width:400px;margin:10px;">'
-
-    return html
+    return render_template("site-structure.html", images = image_files)
 
 @app.route("/image/<filename>")
 def image(filename):
