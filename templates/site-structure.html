@@ -1,0 +1,28 @@
+<!--
+TODO:
+- maybe generate a nice html format from chatgpt?
+- maybe add a section where the authentication will go
+-->
+<!doctype html>
+<html>
+  <head>
+    <title>Software Defined Radio Image Transmission</title>
+    <style>
+        img {
+            width: 200px;
+            margin: 10px;
+        }
+    </style>
+  </head>
+  <body>
+    <h1>First part of secret message</h1>
+    <iframe width="420" height="315"
+        src="https://www.youtube.com/embed/F2sERCgDESE">
+    </iframe>
+
+    <h1>Images</h1>
+    {% for image in images %}
+        <img src="{{ url_for('static', filename='images/' + image) }}" alt="{{ image }}" style="width: 200px; margin: 10px;">
+    {% endfor %}
+  </body>
+</html>
