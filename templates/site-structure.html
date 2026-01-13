@@ -1,6 +1,9 @@
 <!--
 TODO:
-- maybe generate a nice html format from chatgpt?
+- create the websocket that will allow 
+  for the images to update automatically without having to refresh
+  (requires a dependency)
+- make the formatting for the images nicer, like adding them to a table
 - maybe add a section where the authentication will go
 -->
 <!doctype html>
@@ -22,7 +25,7 @@ TODO:
 
     <h1>Images</h1>
     {% for image in images %}
-        <img src="{{ url_for('static', filename='images/' + image) }}" alt="{{ image }}" style="width: 200px; margin: 10px;">
+        <img src="{{ url_for('get_images', filename=image)}}" style="width: 200px; margin: 10px;">
     {% endfor %}
   </body>
 </html>
