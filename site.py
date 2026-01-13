@@ -3,7 +3,7 @@ import os
 
 app = Flask(__name__)
 
-IMAGE_FOLDER = "photos"
+IMAGE_FOLDER = "photo_site/photos"
 
 @app.route("/")
 def index():
