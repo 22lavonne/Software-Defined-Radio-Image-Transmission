@@ -1,24 +1,25 @@
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, render_template, abort
 import os
 
 app = Flask(__name__)
 
-IMAGE_FOLDER = "photo_site/photos"
+#IMAGE_FOLDER = "photo_site/photos"
+IMAGE_FOLDER = os.path.join(os.getcwd(), "runtime-images")
 
 @app.route("/")
 def index():
-    files = os.listdir(IMAGE_FOLDER)
-    images = [f for f in files if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
+    images = [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
 
-    html = "<h1>Quick and Dirty</h1>"
-    for img in images:
-        html += f'<img src="/image/{img}" style="max-width:400px;margin:10px;">'
+    return render_template("site-structure.html", images = images)
 
-    return html
-
+# abort is used here in case the path to the file name does not exist
 @app.route("/image/<filename>")
-def image(filename):
+def get_images(filename):
+    if not os.path.exists(os.path.join(IMAGE_FOLDER, filename)):
+        abort(404)
+    # if it does exist then return the file from that directory
     return send_from_directory(IMAGE_FOLDER, filename)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
