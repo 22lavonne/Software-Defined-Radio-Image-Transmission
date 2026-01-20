@@ -5,8 +5,8 @@ import numpy as np
 # USE ARROW KEYS TO MOVE AROUND IN THE IMAGE WINDOW
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent.parent
-image_folder = PROJECT_ROOT / "Example-Images"
+PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
+image_folder = PROJECT_ROOT / "runtime-images"
 
 
 image_files = []
