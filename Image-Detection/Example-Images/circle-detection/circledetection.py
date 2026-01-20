@@ -6,7 +6,7 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
-image_folder = PROJECT_ROOT / "runtime-images"
+image_folder = PROJECT_ROOT / "Example-Images"
 
 
 image_files = []
