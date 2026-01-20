@@ -1,10 +1,3 @@
-<!--
-TODO:
-- make a scrollable table where the images will go 
-- add the section where the authentication will go 
-- maybe I can make another window pop up that will show the username and password,
-- then do the 2-factor thing
--->
 <!doctype html>
 <html>
   <head>
@@ -17,6 +10,20 @@ TODO:
     <iframe width="420" height="315"
         src="https://www.youtube.com/embed/F2sERCgDESE">
     </iframe>
+
+    <!-- 
+    TODO: 
+    - remove target=_blank after testing so the login  
+    - figure out 2 factor authentication with email
+    -->
+    <form method="POST" action="{{ url_for('login') }}" target="_blank">
+      <label for="uname">Username:</label><br>
+      <input type="text" id="uname" name="uname"><br>
+      <label for="passwd">Password:</label><br>
+      <input type="text" id="passwd" name="passwd"><br><br>
+      <input type="submit" value="Submit">
+    </form> 
+    
     <div style="overflow-x:auto;">
       <table>
         <thead>
