@@ -1,4 +1,4 @@
-from flask import Flask, send_from_directory, render_template, abort
+from flask import Flask, send_from_directory, render_template, abort, request, redirect, url_for
 import os
 
 app = Flask(__name__)
@@ -19,6 +19,19 @@ def get_images(filename):
         abort(404)
     # if it does exist then return the file from that directory
     return send_from_directory(IMAGE_FOLDER, filename)
+
+@app.route('/login', methods=['POST'])
+def login():
+    uname = request.form['uname']
+    passwd = request.form['passwd']
+    # put logic here
+    if uname == "Obi-wan" and passwd == "12345":
+        return redirect(url_for('dashboard'))
+    return "Login failed", 400
+
+@app.route('/login-page')
+def dashboard():
+    return render_template('login-page.html')
 
 
 if __name__ == "__main__":
