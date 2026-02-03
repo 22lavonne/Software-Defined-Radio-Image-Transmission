@@ -1,5 +1,13 @@
 from flask import Flask, send_from_directory, render_template, abort, request, redirect, url_for
+import google_auth_oauthlib.flow
+import json
 import os
+import requests
+from googleapiclient.discovery import build
+import googleapiclient.errors
+import google.oauth2.credentials
+
+# using this website for OAuth google login: https://docs.replit.com/additional-resources/google-auth-in-flask#google-sheets-api-setup
 
 app = Flask(__name__)
 
