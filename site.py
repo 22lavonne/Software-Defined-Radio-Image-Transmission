@@ -1,4 +1,4 @@
-from flask import Flask, send_from_directory, render_template, abort, request, redirect, url_for
+from flask import Flask, send_from_directory, render_template, abort, request, redirect, url_for, session
 import google_auth_oauthlib.flow
 import json
 import os
@@ -7,9 +7,72 @@ from googleapiclient.discovery import build
 import googleapiclient.errors
 import google.oauth2.credentials
 
-# using this website for OAuth google login: https://docs.replit.com/additional-resources/google-auth-in-flask#google-sheets-api-setup
 
 app = Flask(__name__)
+
+# code to use google authentication adapted from: https://docs.replit.com/additional-resources/google-auth-in-flask#google-sheets-api-setup
+
+# `FLASK_SECRET_KEY` is used by sessions
+app.secret_key = os.environ.get('FLASK_SECRET_KEY') or os.urandom(24)
+
+# `GOOGLE_APIS_OAUTH_SECRET` contains the contents of a JSON file to be downloaded
+# from the Google Cloud Credentials panel
+import json
+
+with open('client_secret.json', 'r') as f:
+    google_oauth_secrets = json.load(f)
+    
+# oauth_config = json.loads(os.environ['GOOGLE_OAUTH_SECRETS'])
+
+# This sets up a configuration for the OAuth flow
+oauth_flow = google_auth_oauthlib.flow.Flow.from_client_config(
+    google_oauth_secrets,
+    # scopes define what APIs you want to access on behave of the user once authenticated
+    scopes=[
+        "https://www.googleapis.com/auth/userinfo.email",
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.profile",
+    ]
+)
+
+# This is entrypoint of the login page. It will redirect to the Google login service located at the `authorization_url`. 
+# The `redirect_uri` is actually the URI which the Google login service will use to redirect back to this app.
+@app.route('/signin')
+def signin():
+
+    oauth_flow.redirect_uri = url_for('oauth2callback', _external=True).replace('http://', 'https://')
+    authorization_url, state = oauth_flow.authorization_url()
+    session['state'] = state
+    return redirect(authorization_url)
+
+# This is the endpoint that Google login service redirects back to. It must be added to the "Authorized redirect URIs"
+# in the API credentials panel within Google Cloud. It will call a Google endpoint to request
+# an access token and store it in the user session. After this, the access token can be used to access APIs on behalf of the user
+@app.route('/oauth2callback')
+def oauth2callback():
+    if not session['state'] == request.args['state']:
+        return 'Invalid state parameter', 400
+    oauth_flow.fetch_token(authorization_response=request.url.replace('http:', 'https:'))
+    session['access_token'] = oauth_flow.credentials.token
+    return redirect("/")
+
+# Call the userinfo API to get the user's information with a valid access token
+def get_user_info(access_token):
+    response = requests.get("https://www.googleapis.com/oauth2/v3/userinfo", headers={
+       "Authorization": f"Bearer {access_token}"
+   })
+    if response.status_code == 200:
+        user_info = response.json()
+        return user_info
+    else:
+        print(f"Failed to fetch user info: {response.status_code} {response.text}")
+        return None
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/')
+
 
 #IMAGE_FOLDER = "photo_site/photos"
 IMAGE_FOLDER = os.path.join(os.getcwd(), "runtime-images")
@@ -40,6 +103,21 @@ def login():
 @app.route('/login-page')
 def dashboard():
     return render_template('login-page.html')
+
+@app.route('/')
+def welcome():
+    if "access_token" in session:
+        user_info = get_user_info(session["access_token"])
+        if user_info:
+            return f"""
+            Hello {user_info["given_name"]}!<br>
+            Your email address is {user_info["email"]}<br>
+            <a href="/signin">Sign In to Google</a><br>
+            """
+    return """
+    <h1>Welcome to Google Sheet Importer</h1>
+    <a href="/signin">Sign In to Google</a><br>
+    """
 
 
 if __name__ == "__main__":

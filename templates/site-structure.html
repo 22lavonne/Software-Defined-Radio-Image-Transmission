@@ -112,13 +112,19 @@
     <h3>Second part of secret message</h3>
     <div class="responsive-form">
       <h4>Login Required</h4>
-      <form method="POST" action="{{ url_for('login') }}" target="_blank">
+      <a href="{{ url_for('signin') }}">
+        Sign in with Google
+      </a>
+      <!--
+        <form method="POST" action="{{ url_for('login') }}" target="_blank">
         <label for="uname">Username:</label><br>
         <input type="text" id="uname" name="uname"><br>
         <label for="passwd">Password:</label><br>
         <input type="password" id="passwd" name="passwd"><br><br>
         <input type="submit" value="Submit">
-      </form> 
+      </form>
+      -->
+    
     </div>
   </body>
 </html>
