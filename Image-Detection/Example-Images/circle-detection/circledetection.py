@@ -2,11 +2,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# USE ARROW KEYS TO MOVE AROUND IN THE IMAGE WINDOW
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
 image_folder = PROJECT_ROOT / "runtime-images"
+output_folder = PROJECT_ROOT / "output"
+output_folder.mkdir(parents=True, exist_ok=True)
 
 
 image_files = []
@@ -48,20 +48,32 @@ for image_path in image_files:
     # Use the Hough transform to detect circles in the image
     circles = cv2.HoughCircles(captured_frame_lab_red, cv2.HOUGH_GRADIENT, 1, captured_frame_lab_red.shape[0] / 8, param1=100, param2=18, minRadius=5, maxRadius=60)
 
-    # If we have extracted a circle, draw an outline
-    # We only need to detect one circle here, since there will only be one reference object
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
-        cv2.circle(output_frame, center=(circles[0, 0], circles[0, 1]), radius=circles[0, 2], color=(0, 255, 0), thickness=2)
-        print(f"  - Circle detected at ({circles[0, 0]}, {circles[0, 1]}) with radius {circles[0, 2]}")
+        center_x, center_y, radius = circles[0, 0], circles[0, 1], circles[0, 2]
+        cv2.circle(output_frame, center=(center_x, center_y), radius=radius, color=(0, 255, 0), thickness=2)
+        print(f"  - Circle detected at ({center_x}, {center_y}) with radius {radius}")
+
+        padding = int(round(radius * 0.2))
+        x_min = max(center_x - radius - padding, 0)
+        y_min = max(center_y - radius - padding, 0)
+        x_max = min(center_x + radius + padding, captured_frame.shape[1] - 1)
+        y_max = min(center_y + radius + padding, captured_frame.shape[0] - 1)
+
+        cropped_frame = captured_frame[y_min : y_max + 1, x_min : x_max + 1]
+        output_path = output_folder / f"{image_path.stem}_cropped.png"
+        if not cv2.imwrite(str(output_path), cropped_frame):
+            print(f"  - Failed to write cropped image to {output_path}")
+        else:
+            print(f"  - Saved cropped image to {output_path.relative_to(PROJECT_ROOT)}")
     else:
         print("  - No circles detected")
 
-    # Show annotated image (one window per file) and wait for keypress to advance
+   
     window_name = f"frame - {image_path.name}"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.imshow(window_name, output_frame)
-    cv2.waitKey(0)
+    cv2.waitKey(1)
     cv2.destroyWindow(window_name)
 
 
