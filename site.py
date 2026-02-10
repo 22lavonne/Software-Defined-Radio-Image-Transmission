@@ -68,31 +68,31 @@ def oauth2callback():
     # get the credentials of the user trying to login
     credentials = oauth_flow.credentials
     session['access_token'] = credentials.token
-    return redirect(url_for('dashboard'))
+    # return redirect(url_for('dashboard'))
         
     # code to try to look for a specific google user, doesn't work 
-    # user_info_response = requests.get(
-    #     'https://www.googleapis.com',
-    #     params={'access_token': oauth_flow.credentials.token}
-    # )
+    user_info_response = requests.get(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        params={'access_token': oauth_flow.credentials.token}
+    )
     
-    # if not user_info_response.ok:
-    #     print(f"Error from Google: {user_info_response.text}")
-    #     return "Failed to get user info", 400
+    if not user_info_response.ok:
+        print(f"Error from Google: {user_info_response.text}")
+        return "Failed to get user info", 400
 
-    # user_info = user_info_response.json()
-    # user_email = user_info.get('email')
+    user_info = user_info_response.json()
+    user_email = user_info.get('email')
     
-    # # if the user email is equal to the hard coded email
-    # # (since only obi-wan can login)
-    # if user_email == ALLOWED_EMAIL:
-    #     session['access_token'] = credentials.token
-    #     session['user_email'] = user_email
-    #     return redirect(url_for('dashboard'))
-    # else:
-    #     # if it is any other account that is not obi-wan's, throw the 403 error code and don't let them see the login page
-    #     session.clear()
-    #     return "Access Denied: Your account is not authorized.", 403
+    # if the user email is equal to the hard coded email
+    # (since only obi-wan can login)
+    if user_email == ALLOWED_EMAIL:
+        session['access_token'] = credentials.token
+        session['user_email'] = user_email
+        return redirect(url_for('dashboard'))
+    else:
+        # if it is any other account that is not obi-wan's, throw the 403 error code and don't let them see the login page
+        session.clear()
+        return "Access Denied: Your account is not authorized.", 403
 
 @app.route('/dashboard')
 def dashboard():
