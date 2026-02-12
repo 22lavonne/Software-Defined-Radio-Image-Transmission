@@ -1,39 +1,44 @@
-<!--
-TODO:
-- make a scrollable table where the images will go 
-- add the section where the authentication will go 
-- maybe I can make another window pop up that will show the username and password,
-- then do the 2-factor thing
--->
 <!doctype html>
 <html>
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Software Defined Radio Image Transmission</title>
+    <link rel="stylesheet" href="../static/css/styles.css">
   </head>
+
   <body>
-    <h1>First part of secret message</h1>
-    <iframe width="420" height="315"
-        src="https://www.youtube.com/embed/F2sERCgDESE">
-    </iframe>
-    <div style="overflow-x:auto;">
-      <table>
-        <thead>
-          <tr>
-            <th>Death Star Plans</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for image in images %}
-          <tr>
-            <td>
-              <img src="{{ url_for('get_images', filename=image)}}" style="width: 200px; margin: 10px; display: block;">
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <h1>Death Star Plan Revealer</h1>
+
+    <div class="card">
+      <h2>Death Star Plans</h2>
+      <!-- using the predefined image grid element to display the images -->
+      <div class="image-grid">
+        {% for image in images %}
+          <img src="{{ url_for('get_images', filename=image)}}" style="width: 200px; margin: 10px; display: block;">
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="flex-container">
+      <h2>First part of secret message</h2>
+      <br>
+      <div class="container">
+        <iframe width="420" height="315"
+            src="https://www.youtube.com/embed/F2sERCgDESE">
+        </iframe>
+      </div>
+    </div>
+
+    <h3>Second part of secret message</h3>
+    <div class="responsive-form">
+      <h4>Login Required</h4>
+      <a href="{{ url_for('signin') }}">
+        <div class="button">
+          Sign in with Google
+        </div>
+      </a>
+    
     </div>
   </body>
 </html>
