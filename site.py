@@ -92,7 +92,8 @@ def oauth2callback():
     else:
         # if it is any other account that is not obi-wan's, throw the 403 error code and don't let them see the login page
         session.clear()
-        return "Access Denied: Your account is not authorized.", 403
+        # return "Access Denied: Your account is not authorized.", 403
+        return render_template('login-fail.html')
 
 @app.route('/dashboard')
 def dashboard():
