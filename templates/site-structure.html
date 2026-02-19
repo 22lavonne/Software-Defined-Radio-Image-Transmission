@@ -24,11 +24,14 @@
       <h2>First part of secret message</h2>
       <br>
       <div class="container">
-        <iframe width="420" height="315"
-            src="https://www.youtube.com/embed/F2sERCgDESE">
-        </iframe>
+        <video width="480" height="270" controls>
+          <source src="{{ url_for('static', filename='videos/Message1.mp4') }}" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
       </div>
     </div>
+
+      
 
     <h3>Second part of secret message</h3>
     <div class="responsive-form">
