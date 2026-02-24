@@ -7,6 +7,8 @@ from googleapiclient.discovery import build
 import googleapiclient.errors
 import google.oauth2.credentials
 
+# make sure to run the command `lt --port 5000 --subdomain software-defined-radio-transmission`
+# then access the app through the url provided so the google authentication works
 
 app = Flask(__name__)
 
