@@ -24,10 +24,11 @@
       <h2>First part of secret message</h2>
       <br>
       <div class="container">
-        <video width="480" height="270" controls>
+        <video controls>
           <source src="{{ url_for('static', filename='videos/Message1.mp4') }}" type="video/mp4">
             Your browser does not support the video tag.
         </video>
+        
       </div>
     </div>
 
@@ -36,11 +37,13 @@
     <h3>Second part of secret message</h3>
     <div class="responsive-form">
       <h4>Login Required</h4>
-      <a href="{{ url_for('signin') }}">
-        <div class="button">
-          Sign in with Google
-        </div>
-      </a>
+      <div style="text-align: center;">
+        <a href="{{ url_for('signin') }}">
+          <div class="button">
+            Sign in with Google
+          </div>
+        </a>
+      </div>
     
     </div>
   </body>
