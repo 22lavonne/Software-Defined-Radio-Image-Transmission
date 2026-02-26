@@ -6,6 +6,8 @@ import requests
 from googleapiclient.discovery import build
 import googleapiclient.errors
 import google.oauth2.credentials
+import cv2
+import numpy as nb
 
 # make sure to run the command `lt --port 5000 --subdomain software-defined-radio-transmission`
 # then access the app through the url provided so the google authentication works
@@ -122,12 +124,46 @@ def logout():
     return redirect('/')
 
 
+# decrypts images based on the image path and decryption key
+# encryption used through openCV
+def decrypt_image(image_path, key):
+    try:
+        # read the image file as raw bytes
+        with open(image_path, 'rb') as fin:
+            image_data = fin.read()
+
+        # convert image data into a byte array to perform operations
+        image_byte_array = bytearray(image_data)
+
+        # perform xor operation on each byte of the image (based on the encryption key)
+        for index, value in enumerate(image_byte_array):
+            image_byte_array[index] = value ^ key
+
+        # put the decrypted file into the runtime images that the app will pull from
+        decrypted_path = '~/runtime-images/decrypted_' + image_path.split('/')[-1]
+        with open(decrypted_path, 'wb') as fin:
+            fin.write(image_byte_array)
+        
+    except Exception as e:
+        print(f"Error caught while decrypting: {e}")
+
+
 #IMAGE_FOLDER = "photo_site/photos"
+ENCRYPTED_IMAGE_FOLDER = os.path.join(os.getcwd(), "encrypted-images")
 IMAGE_FOLDER = os.path.join(os.getcwd(), "runtime-images")
 
 @app.route("/")
 def index():
-    images = [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
+    # TODO: test image decryption
+    encrypted_images = [f for f in os.listdir(ENCRYPTED_IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    for img in encrypted_images:
+        # TODO: make sure the path for img is correct, or if it needs to be the path rather than than the actual file
+        # the encryption key on the raspberry pi is hard coded here so the server can decrypt
+        # this should theoretically put the decrypted images into the runtime-images folder
+        decrypt_image(img, 123)
+    
+    # then get the images from the runtime-images folder after all the images have been decrypted and populated in this directory
+    images = [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
 
     return render_template("site-structure.html", images = images)
 
@@ -138,34 +174,6 @@ def get_images(filename):
         abort(404)
     # if it does exist then return the file from that directory
     return send_from_directory(IMAGE_FOLDER, filename)
-
-@app.route('/login', methods=['POST'])
-def login():
-    uname = request.form['uname']
-    passwd = request.form['passwd']
-    # put logic here
-    if uname == "Obi-wan" and passwd == "12345":
-        return redirect(url_for('dashboard'))
-    return "Login failed", 400
-
-# @app.route('/login-page')
-# def dashboard():
-#     return render_template('login-page.html')
-
-@app.route('/')
-def welcome():
-    if "access_token" in session:
-        user_info = get_user_info(session["access_token"])
-        if user_info:
-            return f"""
-            Hello {user_info["given_name"]}!<br>
-            Your email address is {user_info["email"]}<br>
-            <a href="/signin">Sign In to Google</a><br>
-            """
-    return """
-    <h1>Welcome to Google Sheet Importer</h1>
-    <a href="/signin">Sign In to Google</a><br>
-    """
 
 
 if __name__ == "__main__":
