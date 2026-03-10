@@ -12,7 +12,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
 # ===================== FOLDERS =====================
 
 # INPUT → runtime-images
-runtime_folder = PROJECT_ROOT / "runtime-images"
+runtime_folder = PROJECT_ROOT / "mock-images"
 
 # OUTPUT → output
 output_folder = PROJECT_ROOT / "output"

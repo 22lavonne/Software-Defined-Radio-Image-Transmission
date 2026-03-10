@@ -176,7 +176,7 @@ def decrypt_image(image_path, output_folder, key):
 
 #IMAGE_FOLDER = "photo_site/photos"
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-ENCRYPTED_IMAGE_FOLDER = os.path.join(BASE_DIR, "encrypted-images")
+ENCRYPTED_IMAGE_FOLDER = os.path.join(BASE_DIR, "output/encrypted")
 IMAGE_FOLDER = os.path.join(BASE_DIR, "runtime-images")
 
 @app.route("/")
