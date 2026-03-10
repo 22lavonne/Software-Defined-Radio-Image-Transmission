@@ -126,8 +126,13 @@ def logout():
 
 # decrypts images based on the image path and decryption key
 # encryption used through openCV
-def decrypt_image(image_path, key):
+def decrypt_image(image_path, output_folder, key):
     try:
+        
+        # Ensure the output directory exists
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+            
         # read the image file as raw bytes
         with open(image_path, 'rb') as fin:
             image_data = fin.read()
@@ -138,32 +143,60 @@ def decrypt_image(image_path, key):
         # perform xor operation on each byte of the image (based on the encryption key)
         for index, value in enumerate(image_byte_array):
             image_byte_array[index] = value ^ key
+            
+        # Create the full path using the passed folder
+        file_name = 'decrypted_' + os.path.basename(image_path)
+        decrypted_path = os.path.join(output_folder, file_name)
+        
+        with open(decrypted_path, 'wb') as fout:
+            fout.write(image_byte_array)
 
-        # put the decrypted file into the runtime images that the app will pull from
-        decrypted_path = '~/runtime-images/decrypted_' + image_path.split('/')[-1]
-        with open(decrypted_path, 'wb') as fin:
-            fin.write(image_byte_array)
+        # output_dir = os.path.expanduser('~/runtime-images')
+        
+        # # making the directory if it does not exist
+        # if not os.path.exists(output_dir):
+        #     os.makedirs(output_dir)
+            
+        # # change the name of the file to include 'decrypted_'
+        # file_name = 'decrypted_' + os.path.basename(image_path)
+        # decrypted_path = os.path.join(output_dir, file_name)
+
+        # # then write the info to the file
+        # with open(decrypted_path, 'wb') as fout:
+        #     fout.write(image_byte_array)
+        
+        # # put the decrypted file into the runtime images that the app will pull from
+        # decrypted_path = '~/runtime-images/decrypted_' + image_path.split('/')[-1]
+        # with open(decrypted_path, 'wb') as fin:
+        #     fin.write(image_byte_array)
         
     except Exception as e:
         print(f"Error caught while decrypting: {e}")
 
 
 #IMAGE_FOLDER = "photo_site/photos"
-ENCRYPTED_IMAGE_FOLDER = os.path.join(os.getcwd(), "encrypted-images")
-IMAGE_FOLDER = os.path.join(os.getcwd(), "runtime-images")
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+ENCRYPTED_IMAGE_FOLDER = os.path.join(BASE_DIR, "encrypted-images")
+IMAGE_FOLDER = os.path.join(BASE_DIR, "runtime-images")
 
 @app.route("/")
 def index():
-    # TODO: test image decryption
+    
+    # checks that the encrypted image folder exists
+    if not os.path.exists(ENCRYPTED_IMAGE_FOLDER):
+        return f"Error: Folder {ENCRYPTED_IMAGE_FOLDER} not found."
+    
     encrypted_images = [f for f in os.listdir(ENCRYPTED_IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
     for img in encrypted_images:
         # TODO: make sure the path for img is correct, or if it needs to be the path rather than than the actual file
         # the encryption key on the raspberry pi is hard coded here so the server can decrypt
         # this should theoretically put the decrypted images into the runtime-images folder
-        decrypt_image(img, 123)
+        img_path = os.path.join(ENCRYPTED_IMAGE_FOLDER, img)
+        decrypt_image(img_path, IMAGE_FOLDER, 123)
     
     # then get the images from the runtime-images folder after all the images have been decrypted and populated in this directory
-    images = [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    images = [f for f in os.listdir(IMAGE_FOLDER) 
+              if f.lower().endswith((".png", ".jpg", ".jpeg"))]
 
     return render_template("site-structure.html", images = images)
 
