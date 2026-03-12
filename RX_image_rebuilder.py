@@ -137,7 +137,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default=None)
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--outdir", default="C:\\Users\\Tyler\\Documents\\Codes\\Python\\SNR Design\\images")
+    # ap.add_argument("--outdir", default="C:\\Users\\Tyler\\Documents\\Codes\\Python\\SNR Design\\images")
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+    OUTPUT_DIR = os.path.join(BASE_DIR, "output/encrypted")
+    ap.add_argument("--outdir", default=OUTPUT_DIR)
     args = ap.parse_args()
 
     port = pick_port(args.port)
