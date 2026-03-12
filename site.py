@@ -4,9 +4,7 @@ import json
 import os
 import requests
 from googleapiclient.discovery import build
-import googleapiclient.errors
-import google.oauth2.credentials
-import cv2
+from pathlib import Path
 import numpy as nb
 
 # make sure to run the command `lt --port 5000 --subdomain software-defined-radio-transmission`
@@ -151,30 +149,29 @@ def decrypt_image(image_path, output_folder, key):
         with open(decrypted_path, 'wb') as fout:
             fout.write(image_byte_array)
 
-        # output_dir = os.path.expanduser('~/runtime-images')
-        
-        # # making the directory if it does not exist
-        # if not os.path.exists(output_dir):
-        #     os.makedirs(output_dir)
-            
-        # # change the name of the file to include 'decrypted_'
-        # file_name = 'decrypted_' + os.path.basename(image_path)
-        # decrypted_path = os.path.join(output_dir, file_name)
-
-        # # then write the info to the file
-        # with open(decrypted_path, 'wb') as fout:
-        #     fout.write(image_byte_array)
-        
-        # # put the decrypted file into the runtime images that the app will pull from
-        # decrypted_path = '~/runtime-images/decrypted_' + image_path.split('/')[-1]
-        # with open(decrypted_path, 'wb') as fin:
-        #     fin.write(image_byte_array)
-        
     except Exception as e:
         print(f"Error caught while decrypting: {e}")
 
+# will change the extension of any binary files gotten from the esp32 into png files,
+# which can then be decrypted using the decryption function.
+def change_extension_pathlib(old_file, new_extension):
+    # change the extension of a file using pathlib
+    old_path = Path(old_file)
+    # the new extension should start with a dot (ex '.png')
+    new_path = old_path.with_suffix(new_extension) 
+    
+    try:
+        old_path.rename(new_path)
+        print(f"Successfully changed '{old_file}' to '{new_path.name}'")
+        return new_path
+    except FileNotFoundError: # Catches errors if the original file isn't found
+        print(f"Error: The file '{old_file}' was not found.")
+    except FileExistsError: # Catches errors if the new file name already exists
+        print(f"Error: The file '{new_path.name}' already exists.")
+    except Exception as e:
+        print(f"Exception occurred: '{e}")
 
-#IMAGE_FOLDER = "photo_site/photos"
+# specify directories needed for image stuff in the main index function
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 ENCRYPTED_IMAGE_FOLDER = os.path.join(BASE_DIR, "output/encrypted")
 IMAGE_FOLDER = os.path.join(BASE_DIR, "runtime-images")
@@ -186,12 +183,19 @@ def index():
     if not os.path.exists(ENCRYPTED_IMAGE_FOLDER):
         return f"Error: Folder {ENCRYPTED_IMAGE_FOLDER} not found."
     
-    encrypted_images = [f for f in os.listdir(ENCRYPTED_IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    encrypted_images = [f for f in os.listdir(ENCRYPTED_IMAGE_FOLDER) if f.lower().endswith((".png", ".bin"))]
     for img in encrypted_images:
-        # TODO: make sure the path for img is correct, or if it needs to be the path rather than than the actual file
+        
+        # if the encrypted files were sent as binary files, 
+        # then convert them into png files before decyrpting them
+        img_path = os.path.join(ENCRYPTED_IMAGE_FOLDER, img)
+        if (Path(img_path).suffix == ".bin"):
+            # change the current image path to the new one with the .png extension
+            img_path = change_extension_pathlib(img_path, ".png")
+            # print ("new image: ", new_img)
+        
         # the encryption key on the raspberry pi is hard coded here so the server can decrypt
         # this should theoretically put the decrypted images into the runtime-images folder
-        img_path = os.path.join(ENCRYPTED_IMAGE_FOLDER, img)
         decrypt_image(img_path, IMAGE_FOLDER, 123)
     
     # then get the images from the runtime-images folder after all the images have been decrypted and populated in this directory
