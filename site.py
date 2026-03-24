@@ -6,6 +6,7 @@ import requests
 from googleapiclient.discovery import build
 from pathlib import Path
 import numpy as nb
+import filecmp
 
 # make sure to run the command `lt --port 5000 --subdomain software-defined-radio-transmission`
 # then access the app through the url provided so the google authentication works
@@ -184,6 +185,7 @@ def index():
         return f"Error: Folder {ENCRYPTED_IMAGE_FOLDER} not found."
     
     encrypted_images = [f for f in os.listdir(ENCRYPTED_IMAGE_FOLDER) if f.lower().endswith((".png", ".bin"))]
+    
     for img in encrypted_images:
         
         # if the encrypted files were sent as binary files, 
@@ -201,8 +203,31 @@ def index():
     # then get the images from the runtime-images folder after all the images have been decrypted and populated in this directory
     images = [f for f in os.listdir(IMAGE_FOLDER) 
               if f.lower().endswith((".png", ".jpg", ".jpeg"))]
-
-    return render_template("site-structure.html", images = images)
+    
+    # there are currently multiple copies of each image, so we only want to display one of each
+    unique_images = []
+    # so iterate through the current list of images
+    for curr_img in images:
+        new_path = os.path.join(IMAGE_FOLDER, curr_img)
+        is_duplicate = False
+        
+        # loop through all the current existing unique images 
+        # and check if the current image is the same as anything in the unique list
+        for existing_filename in unique_images:
+            existing_path = os.path.join(IMAGE_FOLDER, existing_filename)
+            
+            # use filecmp import for byte-for-byte comparison
+            # if it's the same, break out of the inner loop and just don't add the new image to the unique list
+            if filecmp.cmp(new_path, existing_path, shallow=False):
+                is_duplicate = True
+                break
+                
+        # if no duplicate is found in the current unique list, then add the current image to that list
+        if not is_duplicate:
+            unique_images.append(curr_img)
+        
+    # then just display the unique images.
+    return render_template("site-structure.html", images = unique_images)
 
 # abort is used here in case the path to the file name does not exist
 @app.route("/image/<filename>")
