@@ -8,19 +8,21 @@ import numpy as np
 
 STATIC_KEY = 123  # Static key for XOR encryption
 PER_IMAGE_TIMEOUT_SEC = 5
+IMAGE_SKIP_INTERVAL = 2  # Process every Nth image (1 = process all)
+SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
-# Slightly relaxed red segmentation in HSV (red wraps around hue boundaries)
-RED_LOWER_1 = np.array([0, 100, 80], dtype=np.uint8)
+# Stricter red segmentation in HSV (red wraps around hue boundaries)
+RED_LOWER_1 = np.array([0, 140, 120], dtype=np.uint8)
 RED_UPPER_1 = np.array([10, 255, 255], dtype=np.uint8)
-RED_LOWER_2 = np.array([170, 100, 80], dtype=np.uint8)
+RED_LOWER_2 = np.array([170, 140, 120], dtype=np.uint8)
 RED_UPPER_2 = np.array([180, 255, 255], dtype=np.uint8)
 
 # Require at least this fraction of red pixels inside detected circle (stricter)
-MIN_RED_RATIO_IN_CIRCLE = 0.75
+MIN_RED_RATIO_IN_CIRCLE = 0.85
 
 # Require at least this fraction of edge pixels around the detected circle
 # (helps reject blobs that are not circular)
-MIN_EDGE_RATIO_IN_RING = 0.40
+MIN_EDGE_RATIO_IN_RING = 0.50
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
@@ -117,9 +119,9 @@ def build_red_mask(frame_bgr: np.ndarray) -> np.ndarray:
     red_mask_2 = cv2.inRange(hsv, RED_LOWER_2, RED_UPPER_2)
     red_mask = cv2.bitwise_or(red_mask_1, red_mask_2)
 
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = np.ones((5, 5), np.uint8)
     red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
     red_mask = cv2.GaussianBlur(red_mask, (5, 5), 1.5, 1.5)
 
     return red_mask
@@ -152,126 +154,143 @@ if __name__ == "__main__":
         print(f"  - {m}")
 
     print("--------------------------------------------------")
+    for mount in mount_points:
+        print(f"\nScanning root of: {mount}")
 
-    for image_path in image_files:
-        image_start = time.perf_counter()
+        image_files = sorted(
+            p for p in mount.iterdir()
+            if p.is_file() and p.suffix.lower() in SUPPORTED_IMAGE_EXTS
+        )
 
-        # Install per-image timeout handler and arm the alarm
-        signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(PER_IMAGE_TIMEOUT_SEC)
+        if not image_files:
+            print("  - No supported images found in root")
+            continue
+
+        print(f"  - Found {len(image_files)} images")
+
+        for image_index, image_path in enumerate(image_files):
+            if IMAGE_SKIP_INTERVAL > 1 and (image_index % IMAGE_SKIP_INTERVAL) != 0:
+                print(f"  - Skipping image (interval={IMAGE_SKIP_INTERVAL}): {image_path.name}")
+                continue
+
+            image_start = time.perf_counter()
+
+            # Install per-image timeout handler and arm the alarm
+            signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(PER_IMAGE_TIMEOUT_SEC)
 
             print(f"\nProcessing: {image_path}")
 
-        try:
-            captured_frame = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+            try:
+                captured_frame = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
 
-            if captured_frame is None:
-                print("  - Failed to load image, skipping")
-                continue
-
-            output_frame = captured_frame.copy()
-
-            # Handle grayscale safely
-            if len(captured_frame.shape) == 2:
-                captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_GRAY2BGR)
-            elif captured_frame.shape[2] == 4:
-                captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_BGRA2BGR)
-            else:
-                captured_frame_bgr = captured_frame
-
-            if is_timed_out(image_start):
-                print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
-                continue
-
-            captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, 3)
-            mask = build_red_mask(captured_frame_bgr)
-
-            if is_timed_out(image_start):
-                print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
-                continue
-
-            # Stricter HoughCircles parameters to reduce false positives
-            circles = cv2.HoughCircles(
-                mask,
-                cv2.HOUGH_GRADIENT,
-                dp=1.2,
-                minDist=mask.shape[0] / 4,
-                param1=120,
-                param2=30,
-                minRadius=10,
-                maxRadius=50
-            )
-
-            if is_timed_out(image_start):
-                print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
-                continue
-
-            if circles is not None:
-                circles = np.round(circles[0, :]).astype("int")
-                center_x, center_y, radius = max(circles, key=lambda c: c[2])
-
-                red_ratio = red_ratio_inside_circle(mask, center_x, center_y, radius)
-                if red_ratio < MIN_RED_RATIO_IN_CIRCLE:
-                    print(
-                        f"  - Rejected circle at ({center_x}, {center_y}) radius {radius}; "
-                        f"red ratio {red_ratio:.2f} < {MIN_RED_RATIO_IN_CIRCLE:.2f}"
-                    )
+                if captured_frame is None:
+                    print("  - Failed to load image, skipping")
                     continue
 
-                # Compute edges and ensure a reasonable fraction lies on the circle ring
-                gray = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2GRAY)
-                gray = cv2.GaussianBlur(gray, (5, 5), 1.5)
-                edges = cv2.Canny(gray, 50, 150)
+                output_frame = captured_frame.copy()
 
-                edge_ratio = edge_ratio_on_circle(edges, center_x, center_y, radius, thickness=3)
-                if edge_ratio < MIN_EDGE_RATIO_IN_RING:
-                    print(
-                        f"  - Rejected circle at ({center_x}, {center_y}) radius {radius}; "
-                        f"edge ratio {edge_ratio:.2f} < {MIN_EDGE_RATIO_IN_RING:.2f}"
-                    )
-                    continue
-
-                print(f"  - Circle detected at ({center_x}, {center_y}) radius {radius} (red {red_ratio:.2f}, edge {edge_ratio:.2f})")
-
-                padding = int(round(radius * 0.2))
-
-                x_min = max(center_x - radius - padding, 0)
-                y_min = max(center_y - radius - padding, 0)
-                x_max = min(center_x + radius + padding, captured_frame.shape[1] - 1)
-                y_max = min(center_y + radius + padding, captured_frame.shape[0] - 1)
-
-                cropped_frame = captured_frame[y_min:y_max + 1, x_min:x_max + 1]
-
-                if cropped_frame.size == 0:
-                    print("  - WARNING: Cropped region empty")
-                    continue
-
-                output_path = output_folder / f"{image_path.stem}_cropped.png"
-
-                if cv2.imwrite(str(output_path), cropped_frame):
-                    print(f"  - Saved cropped image to {output_path}")
-                    encrypt_image(output_path)
+                # Handle grayscale safely
+                if len(captured_frame.shape) == 2:
+                    captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_GRAY2BGR)
+                elif captured_frame.shape[2] == 4:
+                    captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_BGRA2BGR)
                 else:
-                    print("  - Failed to write cropped image")
+                    captured_frame_bgr = captured_frame
 
                 if is_timed_out(image_start):
-                    print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s (after save/encrypt)")
+                    print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
+                    continue
 
-            else:
-                print("  - No circles detected")
+                captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, 3)
+                mask = build_red_mask(captured_frame_bgr)
 
-        except TimeoutError:
-            print(f"  - TIMED OUT: image exceeded {PER_IMAGE_TIMEOUT_SEC} seconds, skipping")
-            continue
-        finally:
-            # Disarm the alarm for this image
-            try:
-                signal.alarm(0)
-            except Exception:
-                pass
+                if is_timed_out(image_start):
+                    print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
+                    continue
 
-        # Optional display (can comment out if running headless)
-        window_name = f"frame - {image_path.name}"
-        cv2.imshow(window_name, output_frame)
-        cv2.waitKey(1)
-        cv2.destroyWindow(window_name)
+                # Stricter HoughCircles parameters to reduce false positives
+                circles = cv2.HoughCircles(
+                    mask,
+                    cv2.HOUGH_GRADIENT,
+                    dp=1.2,
+                    minDist=mask.shape[0] / 4,
+                    param1=120,
+                    param2=38,
+                    minRadius=12,
+                    maxRadius=45
+                )
+
+                if is_timed_out(image_start):
+                    print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
+                    continue
+
+                if circles is not None:
+                    circles = np.round(circles[0, :]).astype("int")
+                    center_x, center_y, radius = max(circles, key=lambda c: c[2])
+
+                    red_ratio = red_ratio_inside_circle(mask, center_x, center_y, radius)
+                    if red_ratio < MIN_RED_RATIO_IN_CIRCLE:
+                        print(
+                            f"  - Rejected circle at ({center_x}, {center_y}) radius {radius}; "
+                            f"red ratio {red_ratio:.2f} < {MIN_RED_RATIO_IN_CIRCLE:.2f}"
+                        )
+                        continue
+
+                    # Compute edges and ensure a reasonable fraction lies on the circle ring
+                    gray = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2GRAY)
+                    gray = cv2.GaussianBlur(gray, (5, 5), 1.5)
+                    edges = cv2.Canny(gray, 50, 150)
+
+                    edge_ratio = edge_ratio_on_circle(edges, center_x, center_y, radius, thickness=3)
+                    if edge_ratio < MIN_EDGE_RATIO_IN_RING:
+                        print(
+                            f"  - Rejected circle at ({center_x}, {center_y}) radius {radius}; "
+                            f"edge ratio {edge_ratio:.2f} < {MIN_EDGE_RATIO_IN_RING:.2f}"
+                        )
+                        continue
+
+                    print(f"  - Circle detected at ({center_x}, {center_y}) radius {radius} (red {red_ratio:.2f}, edge {edge_ratio:.2f})")
+
+                    padding = int(round(radius * 0.2))
+
+                    x_min = max(center_x - radius - padding, 0)
+                    y_min = max(center_y - radius - padding, 0)
+                    x_max = min(center_x + radius + padding, captured_frame.shape[1] - 1)
+                    y_max = min(center_y + radius + padding, captured_frame.shape[0] - 1)
+
+                    cropped_frame = captured_frame[y_min:y_max + 1, x_min:x_max + 1]
+
+                    if cropped_frame.size == 0:
+                        print("  - WARNING: Cropped region empty")
+                        continue
+
+                    output_path = output_folder / f"{image_path.stem}_cropped.png"
+
+                    if cv2.imwrite(str(output_path), cropped_frame):
+                        print(f"  - Saved cropped image to {output_path}")
+                        encrypt_image(output_path)
+                    else:
+                        print("  - Failed to write cropped image")
+
+                    if is_timed_out(image_start):
+                        print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s (after save/encrypt)")
+
+                else:
+                    print("  - No circles detected")
+
+            except TimeoutError:
+                print(f"  - TIMED OUT: image exceeded {PER_IMAGE_TIMEOUT_SEC} seconds, skipping")
+                continue
+            finally:
+                # Disarm the alarm for this image
+                try:
+                    signal.alarm(0)
+                except Exception:
+                    pass
+
+            # Optional display (can comment out if running headless)
+            window_name = f"frame - {image_path.name}"
+            cv2.imshow(window_name, output_frame)
+            cv2.waitKey(1)
+            cv2.destroyWindow(window_name)
