@@ -8,14 +8,14 @@ import numpy as np
 STATIC_KEY = 123  # Static key for XOR encryption
 PER_IMAGE_TIMEOUT_SEC = 5
 
-# Strict red segmentation in HSV (red wraps around hue boundaries)
-RED_LOWER_1 = np.array([0, 120, 90], dtype=np.uint8)
+# Slightly relaxed red segmentation in HSV (red wraps around hue boundaries)
+RED_LOWER_1 = np.array([0, 100, 80], dtype=np.uint8)
 RED_UPPER_1 = np.array([10, 255, 255], dtype=np.uint8)
-RED_LOWER_2 = np.array([170, 120, 90], dtype=np.uint8)
+RED_LOWER_2 = np.array([170, 100, 80], dtype=np.uint8)
 RED_UPPER_2 = np.array([180, 255, 255], dtype=np.uint8)
 
 # Require at least this fraction of red pixels inside detected circle
-MIN_RED_RATIO_IN_CIRCLE = 0.65
+MIN_RED_RATIO_IN_CIRCLE = 0.55
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
@@ -142,7 +142,7 @@ if __name__ == "__main__":
             1,
             mask.shape[0] / 5,
             param1=100,
-            param2=28,
+            param2=23,
             minRadius=5,
             maxRadius=60
         )
