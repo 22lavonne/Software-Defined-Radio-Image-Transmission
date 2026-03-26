@@ -4,8 +4,9 @@ import json
 import os
 import requests
 from googleapiclient.discovery import build
-import googleapiclient.errors
-import google.oauth2.credentials
+from pathlib import Path
+import numpy as nb
+import filecmp
 
 # make sure to run the command `lt --port 5000 --subdomain software-defined-radio-transmission`
 # then access the app through the url provided so the google authentication works
@@ -122,14 +123,111 @@ def logout():
     return redirect('/')
 
 
-#IMAGE_FOLDER = "photo_site/photos"
-IMAGE_FOLDER = os.path.join(os.getcwd(), "runtime-images")
+# decrypts images based on the image path and decryption key
+# encryption used through openCV
+def decrypt_image(image_path, output_folder, key):
+    try:
+        
+        # Ensure the output directory exists
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+            
+        # read the image file as raw bytes
+        with open(image_path, 'rb') as fin:
+            image_data = fin.read()
+
+        # convert image data into a byte array to perform operations
+        image_byte_array = bytearray(image_data)
+
+        # perform xor operation on each byte of the image (based on the encryption key)
+        for index, value in enumerate(image_byte_array):
+            image_byte_array[index] = value ^ key
+            
+        # Create the full path using the passed folder
+        file_name = 'decrypted_' + os.path.basename(image_path)
+        decrypted_path = os.path.join(output_folder, file_name)
+        
+        with open(decrypted_path, 'wb') as fout:
+            fout.write(image_byte_array)
+
+    except Exception as e:
+        print(f"Error caught while decrypting: {e}")
+
+# will change the extension of any binary files gotten from the esp32 into png files,
+# which can then be decrypted using the decryption function.
+def change_extension_pathlib(old_file, new_extension):
+    # change the extension of a file using pathlib
+    old_path = Path(old_file)
+    # the new extension should start with a dot (ex '.png')
+    new_path = old_path.with_suffix(new_extension) 
+    
+    try:
+        old_path.rename(new_path)
+        print(f"Successfully changed '{old_file}' to '{new_path.name}'")
+        return new_path
+    except FileNotFoundError: # Catches errors if the original file isn't found
+        print(f"Error: The file '{old_file}' was not found.")
+    except FileExistsError: # Catches errors if the new file name already exists
+        print(f"Error: The file '{new_path.name}' already exists.")
+    except Exception as e:
+        print(f"Exception occurred: '{e}")
+
+# specify directories needed for image stuff in the main index function
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+ENCRYPTED_IMAGE_FOLDER = os.path.join(BASE_DIR, "output/encrypted")
+IMAGE_FOLDER = os.path.join(BASE_DIR, "runtime-images")
 
 @app.route("/")
 def index():
-    images = [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith((".png", ".jpg", ".jpeg", ".gif"))]
-
-    return render_template("site-structure.html", images = images)
+    
+    # checks that the encrypted image folder exists
+    if not os.path.exists(ENCRYPTED_IMAGE_FOLDER):
+        return f"Error: Folder {ENCRYPTED_IMAGE_FOLDER} not found."
+    
+    encrypted_images = [f for f in os.listdir(ENCRYPTED_IMAGE_FOLDER) if f.lower().endswith((".png", ".bin"))]
+    
+    for img in encrypted_images:
+        
+        # if the encrypted files were sent as binary files, 
+        # then convert them into png files before decyrpting them
+        img_path = os.path.join(ENCRYPTED_IMAGE_FOLDER, img)
+        if (Path(img_path).suffix == ".bin"):
+            # change the current image path to the new one with the .png extension
+            img_path = change_extension_pathlib(img_path, ".png")
+            # print ("new image: ", new_img)
+        
+        # the encryption key on the raspberry pi is hard coded here so the server can decrypt
+        # this should theoretically put the decrypted images into the runtime-images folder
+        decrypt_image(img_path, IMAGE_FOLDER, 123)
+    
+    # then get the images from the runtime-images folder after all the images have been decrypted and populated in this directory
+    images = [f for f in os.listdir(IMAGE_FOLDER) 
+              if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    
+    # there are currently multiple copies of each image, so we only want to display one of each
+    unique_images = []
+    # so iterate through the current list of images
+    for curr_img in images:
+        new_path = os.path.join(IMAGE_FOLDER, curr_img)
+        is_duplicate = False
+        
+        # loop through all the current existing unique images 
+        # and check if the current image is the same as anything in the unique list
+        for existing_filename in unique_images:
+            existing_path = os.path.join(IMAGE_FOLDER, existing_filename)
+            
+            # use filecmp import for byte-for-byte comparison
+            # if it's the same, break out of the inner loop and just don't add the new image to the unique list
+            if filecmp.cmp(new_path, existing_path, shallow=False):
+                is_duplicate = True
+                break
+                
+        # if no duplicate is found in the current unique list, then add the current image to that list
+        if not is_duplicate:
+            unique_images.append(curr_img)
+        
+    # then just display the unique images.
+    return render_template("site-structure.html", images = unique_images)
 
 # abort is used here in case the path to the file name does not exist
 @app.route("/image/<filename>")
@@ -138,34 +236,6 @@ def get_images(filename):
         abort(404)
     # if it does exist then return the file from that directory
     return send_from_directory(IMAGE_FOLDER, filename)
-
-@app.route('/login', methods=['POST'])
-def login():
-    uname = request.form['uname']
-    passwd = request.form['passwd']
-    # put logic here
-    if uname == "Obi-wan" and passwd == "12345":
-        return redirect(url_for('dashboard'))
-    return "Login failed", 400
-
-# @app.route('/login-page')
-# def dashboard():
-#     return render_template('login-page.html')
-
-@app.route('/')
-def welcome():
-    if "access_token" in session:
-        user_info = get_user_info(session["access_token"])
-        if user_info:
-            return f"""
-            Hello {user_info["given_name"]}!<br>
-            Your email address is {user_info["email"]}<br>
-            <a href="/signin">Sign In to Google</a><br>
-            """
-    return """
-    <h1>Welcome to Google Sheet Importer</h1>
-    <a href="/signin">Sign In to Google</a><br>
-    """
 
 
 if __name__ == "__main__":
