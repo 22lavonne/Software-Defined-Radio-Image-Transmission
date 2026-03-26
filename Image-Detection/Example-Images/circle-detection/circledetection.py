@@ -1,10 +1,21 @@
 from pathlib import Path
+import time
 import cv2
 import numpy as np
 
 # ===================== CONFIG =====================
 
 STATIC_KEY = 123  # Static key for XOR encryption
+PER_IMAGE_TIMEOUT_SEC = 5
+
+# Strict red segmentation in HSV (red wraps around hue boundaries)
+RED_LOWER_1 = np.array([0, 120, 90], dtype=np.uint8)
+RED_UPPER_1 = np.array([10, 255, 255], dtype=np.uint8)
+RED_LOWER_2 = np.array([170, 120, 90], dtype=np.uint8)
+RED_UPPER_2 = np.array([180, 255, 255], dtype=np.uint8)
+
+# Require at least this fraction of red pixels inside detected circle
+MIN_RED_RATIO_IN_CIRCLE = 0.65
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
@@ -52,6 +63,38 @@ def encrypt_image(image_path):
     except Exception as e:
         print(f"Encryption error: {e}")
 
+
+def is_timed_out(start_time: float) -> bool:
+    return (time.perf_counter() - start_time) > PER_IMAGE_TIMEOUT_SEC
+
+
+def build_red_mask(frame_bgr: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+
+    red_mask_1 = cv2.inRange(hsv, RED_LOWER_1, RED_UPPER_1)
+    red_mask_2 = cv2.inRange(hsv, RED_LOWER_2, RED_UPPER_2)
+    red_mask = cv2.bitwise_or(red_mask_1, red_mask_2)
+
+    kernel = np.ones((3, 3), np.uint8)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    red_mask = cv2.GaussianBlur(red_mask, (5, 5), 1.5, 1.5)
+
+    return red_mask
+
+
+def red_ratio_inside_circle(mask: np.ndarray, center_x: int, center_y: int, radius: int) -> float:
+    circle_mask = np.zeros(mask.shape[:2], dtype=np.uint8)
+    cv2.circle(circle_mask, (center_x, center_y), radius, 255, thickness=-1)
+
+    total_circle_pixels = cv2.countNonZero(circle_mask)
+    if total_circle_pixels == 0:
+        return 0.0
+
+    red_inside = cv2.bitwise_and(mask, mask, mask=circle_mask)
+    red_pixels = cv2.countNonZero(red_inside)
+    return red_pixels / total_circle_pixels
+
 # ===================== MAIN =====================
 
 if __name__ == "__main__":
@@ -62,6 +105,7 @@ if __name__ == "__main__":
     print("--------------------------------------------------")
 
     for image_path in image_files:
+        image_start = time.perf_counter()
 
         print(f"Processing: {image_path.name}")
 
@@ -81,31 +125,43 @@ if __name__ == "__main__":
         else:
             captured_frame_bgr = captured_frame
 
+        if is_timed_out(image_start):
+            print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
+            continue
+
         captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, 3)
-        captured_frame_lab = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2Lab)
+        mask = build_red_mask(captured_frame_bgr)
 
-        mask = cv2.inRange(
-            captured_frame_lab,
-            np.array([20, 150, 150]),
-            np.array([190, 255, 255])
-        )
-
-        mask = cv2.GaussianBlur(mask, (5, 5), 2, 2)
+        if is_timed_out(image_start):
+            print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
+            continue
 
         circles = cv2.HoughCircles(
             mask,
             cv2.HOUGH_GRADIENT,
             1,
-            mask.shape[0] / 8,
+            mask.shape[0] / 5,
             param1=100,
-            param2=18,
+            param2=28,
             minRadius=5,
             maxRadius=60
         )
 
+        if is_timed_out(image_start):
+            print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s, skipping")
+            continue
+
         if circles is not None:
             circles = np.round(circles[0, :]).astype("int")
-            center_x, center_y, radius = circles[0]
+            center_x, center_y, radius = max(circles, key=lambda c: c[2])
+
+            red_ratio = red_ratio_inside_circle(mask, center_x, center_y, radius)
+            if red_ratio < MIN_RED_RATIO_IN_CIRCLE:
+                print(
+                    f"  - Rejected circle at ({center_x}, {center_y}) radius {radius}; "
+                    f"red ratio {red_ratio:.2f} < {MIN_RED_RATIO_IN_CIRCLE:.2f}"
+                )
+                continue
 
             print(f"  - Circle detected at ({center_x}, {center_y}) radius {radius}")
 
@@ -129,6 +185,9 @@ if __name__ == "__main__":
                 encrypt_image(output_path)
             else:
                 print("  - Failed to write cropped image")
+
+            if is_timed_out(image_start):
+                print(f"  - Timed out after {PER_IMAGE_TIMEOUT_SEC:.1f}s (after save/encrypt)")
 
         else:
             print("  - No circles detected")
