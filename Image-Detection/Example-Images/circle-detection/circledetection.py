@@ -34,36 +34,48 @@ runtime_folder = PROJECT_ROOT / "mock-images"
 output_folder = PROJECT_ROOT / "output"
 output_folder.mkdir(parents=True, exist_ok=True)
 
-# ENCRYPTED → output/encrypted
 encrypted_folder = output_folder / "encrypted"
 encrypted_folder.mkdir(parents=True, exist_ok=True)
 
-# Get images from runtime-images
-image_files = sorted(runtime_folder.glob("*.png"))
+# ===================== MOUNT DETECTION =====================
 
-if not image_files:
-    print(f"No images found in {runtime_folder}")
-else:
-    print(f"Found {len(image_files)} images in {runtime_folder}")
+def get_mount_points():
+    mount_points = []
+
+    # /media/<user>/<drive>
+    media_base = Path("/media")
+    if media_base.exists():
+        for user_dir in media_base.iterdir():
+            if user_dir.is_dir():
+                for drive_dir in user_dir.iterdir():
+                    if drive_dir.is_dir():
+                        mount_points.append(drive_dir)
+
+    # /mnt/<drive>
+    mnt_base = Path("/mnt")
+    if mnt_base.exists():
+        for path in mnt_base.iterdir():
+            if path.is_dir():
+                mount_points.append(path)
+
+    return mount_points
 
 # ===================== ENCRYPTION =====================
 
 def encrypt_image(image_path):
     try:
         with open(image_path, 'rb') as fin:
-            image_data = fin.read()
+            data = bytearray(fin.read())
 
-        image_byte_array = bytearray(image_data)
-
-        for i in range(len(image_byte_array)):
-            image_byte_array[i] ^= STATIC_KEY
+        for i in range(len(data)):
+            data[i] ^= STATIC_KEY
 
         encrypted_path = encrypted_folder / ("encrypted_" + image_path.name)
 
         with open(encrypted_path, 'wb') as fout:
-            fout.write(image_byte_array)
+            fout.write(data)
 
-        print(f"  - Encrypted image saved to {encrypted_path}")
+        print(f"    -> Encrypted: {encrypted_path}")
 
     except Exception as e:
         print(f"Encryption error: {e}")
@@ -129,9 +141,16 @@ def red_ratio_inside_circle(mask: np.ndarray, center_x: int, center_y: int, radi
 
 if __name__ == "__main__":
 
-    print("Reading from:", runtime_folder)
-    print("Saving cropped to:", output_folder)
-    print("Saving encrypted to:", encrypted_folder)
+    mount_points = get_mount_points()
+
+    if not mount_points:
+        print("No mounted drives found.")
+        exit()
+
+    print("Mounted drives found:")
+    for m in mount_points:
+        print(f"  - {m}")
+
     print("--------------------------------------------------")
 
     for image_path in image_files:
@@ -141,7 +160,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGALRM, _timeout_handler)
         signal.alarm(PER_IMAGE_TIMEOUT_SEC)
 
-        print(f"Processing: {image_path.name}")
+            print(f"\nProcessing: {image_path}")
 
         try:
             captured_frame = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
