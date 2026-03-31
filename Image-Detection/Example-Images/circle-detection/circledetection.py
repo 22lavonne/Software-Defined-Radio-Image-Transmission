@@ -7,12 +7,10 @@ import math
 
 # ===================== CONFIG =====================
 
-STATIC_KEY = 123
-IMAGE_TIMEOUT = 5  # seconds
+STATIC_KEY = 123  # Static key for XOR encryption
 
-# Use script location as project root
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR
+PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
 
 # ===================== OUTPUT FOLDERS =====================
 
@@ -22,54 +20,33 @@ output_folder.mkdir(parents=True, exist_ok=True)
 encrypted_folder = output_folder / "encrypted"
 encrypted_folder.mkdir(parents=True, exist_ok=True)
 
-# ===================== SELECT FIRST MEDIA DRIVE =====================
+IMAGE_TIMEOUT = 5
 
-media_base = Path("/media")
+# ===================== LINUX MOUNT DETECTION =====================
 
-if not media_base.exists():
-    raise RuntimeError("/media does not exist")
-
-level1_dirs = sorted([p for p in media_base.iterdir() if p.is_dir()])
-if not level1_dirs:
-    raise RuntimeError("No directories found inside /media")
-
-first_level1 = level1_dirs[0]
-
-level2_dirs = sorted([p for p in first_level1.iterdir() if p.is_dir()])
-if not level2_dirs:
-    raise RuntimeError(f"No drives found inside {first_level1}")
-
-USB_DRIVE = level2_dirs[0]
-
-print(f"Using drive: {USB_DRIVE}")
-
-# ===================== IMAGE SOURCE =====================
-
-runtime_folder = USB_DRIVE
-image_files = sorted(runtime_folder.glob("*.png"))
-
-if not image_files:
-    print(f"No PNG images found in {runtime_folder}")
-    raise SystemExit
-
-print(f"Found {len(image_files)} images")
+def get_mount_points():
+    mount_points = []
+    for base in [Path("/mnt"), Path("/media")]:
+        if base.exists():
+            for path in base.iterdir():
+                if path.is_dir():
+                    mount_points.append(path)
+    return mount_points
 
 # ===================== ENCRYPTION =====================
 
 def encrypt_image(image_path):
     try:
-        with open(image_path, "rb") as fin:
-            image_data = fin.read()
+        with open(image_path, 'rb') as fin:
+            data = bytearray(fin.read())
 
-        image_byte_array = bytearray(image_data)
-
-        for i in range(len(image_byte_array)):
-            image_byte_array[i] ^= STATIC_KEY
+        for i in range(len(data)):
+            data[i] ^= STATIC_KEY
 
         encrypted_path = encrypted_folder / ("encrypted_" + image_path.name)
 
-        with open(encrypted_path, "wb") as fout:
-            fout.write(image_byte_array)
+        with open(encrypted_path, 'wb') as fout:
+            fout.write(data)
 
         print(f"  - Encrypted image saved to {encrypted_path}")
 
@@ -82,154 +59,217 @@ def process_image(image_path):
     try:
         print(f"\nProcessing: {image_path}")
 
-        captured_frame = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
-
-        if captured_frame is None:
-            print("  - Failed to load image, skipping")
+        img = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+        if img is None:
+            print("  - Failed to load image")
             return
 
-        # Normalize image format
-        if len(captured_frame.shape) == 2:
-            captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_GRAY2BGR)
-        elif captured_frame.shape[2] == 4:
-            captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_BGRA2BGR)
+        # Normalize channels
+        if len(img.shape) == 2:
+            bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif img.shape[2] == 4:
+            bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         else:
-            captured_frame_bgr = captured_frame.copy()
+            bgr = img
 
-        captured_frame_bgr = cv2.GaussianBlur(captured_frame_bgr, (3, 3), 0)
+        bgr = cv2.medianBlur(bgr, 3)
 
-        # ===================== STRICT RED MASK =====================
+        # ===================== COLOR MASK =====================
 
-        hsv = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2HSV)
+        lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2Lab)
+        lab_mask = cv2.inRange(
+            lab,
+            np.array([30, 160, 160]),
+            np.array([180, 255, 255])
+        )
 
-        # Tight red only: not broad red hues
-        lower_red1 = np.array([0, 170, 170], dtype=np.uint8)
-        upper_red1 = np.array([6, 255, 255], dtype=np.uint8)
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
-        lower_red2 = np.array([174, 170, 170], dtype=np.uint8)
-        upper_red2 = np.array([180, 255, 255], dtype=np.uint8)
+        lower_red1 = np.array([0, 120, 120])
+        upper_red1 = np.array([10, 255, 255])
 
-        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        mask = cv2.bitwise_or(mask1, mask2)
+        lower_red2 = np.array([170, 120, 120])
+        upper_red2 = np.array([180, 255, 255])
 
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        hsv_mask = cv2.inRange(hsv, lower_red1, upper_red1) | \
+                   cv2.inRange(hsv, lower_red2, upper_red2)
 
-        # ===================== CONTOUR-BASED CIRCLE DETECTION =====================
+        mask = cv2.bitwise_and(lab_mask, hsv_mask)
+        mask = cv2.GaussianBlur(mask, (5, 5), 2)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # ===================== CIRCLE DETECTION =====================
+
+        circles = cv2.HoughCircles(
+            mask,
+            cv2.HOUGH_GRADIENT,
+            dp=1,
+            minDist=mask.shape[0] / 6,
+            param1=120,
+            param2=28,  # slightly less strict
+            minRadius=5,
+            maxRadius=80
+        )
+
+        if circles is None:
+            print("  - No circles detected")
+            return
+
+        circles = np.round(circles[0, :]).astype("int")
+
+        edges = cv2.Canny(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), 50, 150)
 
         best = None
-        best_score = 0.0
+        best_score = 0
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
+        for (cx, cy, r) in circles:
 
-            # Reject tiny junk
-            if area < 80:
+            if cx - r < 0 or cy - r < 0 or cx + r >= bgr.shape[1] or cy + r >= bgr.shape[0]:
                 continue
 
-            perimeter = cv2.arcLength(cnt, True)
-            if perimeter == 0:
+            # ===================== EDGE RATIO =====================
+
+            circ_mask = np.zeros(edges.shape, dtype=np.uint8)
+            cv2.circle(circ_mask, (cx, cy), r, 255, 3)
+
+            edge_pixels = np.count_nonzero(cv2.bitwise_and(edges, edges, mask=circ_mask))
+            circumference = max(1.0, 2 * math.pi * r)
+            edge_ratio = edge_pixels / circumference
+
+            # ===================== COVERAGE =====================
+
+            fill_mask = np.zeros(mask.shape, dtype=np.uint8)
+            cv2.circle(fill_mask, (cx, cy), r, 255, -1)
+
+            masked_inside = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=fill_mask))
+            circle_area = math.pi * r * r
+            coverage = masked_inside / max(1.0, circle_area)
+
+            # Allow filled circles but reject extreme blobs
+            if coverage > 0.95:
                 continue
 
-            # Circularity: 1.0 = perfect circle
-            circularity = 4 * math.pi * area / (perimeter * perimeter)
-            if circularity < 0.85:
-                continue
+            # ===================== INNER EDGE NOISE =====================
 
-            (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-            cx, cy, radius = int(cx), int(cy), int(radius)
+            inner_edges = np.count_nonzero(cv2.bitwise_and(edges, edges, mask=fill_mask))
+            edge_density_inside = inner_edges / max(1.0, circle_area)
 
-            if radius < 6 or radius > 60:
-                continue
+            # ===================== CIRCULARITY =====================
 
-            x, y, w, h = cv2.boundingRect(cnt)
-            rect_area = w * h
-            if rect_area == 0:
-                continue
+            contours, _ = cv2.findContours(
+                cv2.bitwise_and(mask, fill_mask),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE
+            )
 
-            # Contour should fill its bounding box like a circle, not a smear
-            fill_ratio = area / rect_area
-            if fill_ratio < 0.70:
-                continue
+            circularity = 0
 
-            # Must be close to square
-            aspect_ratio = w / float(h)
-            if aspect_ratio < 0.90 or aspect_ratio > 1.10:
-                continue
+            if contours:
+                cnt = max(contours, key=cv2.contourArea)
+                area = cv2.contourArea(cnt)
+                perimeter = cv2.arcLength(cnt, True)
 
-            # Contour area should match enclosing circle reasonably well
-            circle_area = math.pi * (radius ** 2)
-            if circle_area <= 0:
-                continue
+                if perimeter > 0:
+                    circularity = 4 * math.pi * area / (perimeter ** 2)
 
-            area_ratio = area / circle_area
-            if area_ratio < 0.65 or area_ratio > 1.20:
-                continue
+            # ===================== RING CONSISTENCY =====================
 
-            # Mean BGR inside contour: must be truly red-dominant
-            contour_mask = np.zeros(mask.shape, dtype=np.uint8)
-            cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
+            angles_hit = 0
+            total_angles = 0
 
-            mean_bgr = cv2.mean(captured_frame_bgr, mask=contour_mask)
-            b, g, r = mean_bgr[:3]
+            for angle in range(0, 360, 10):
+                rad = np.deg2rad(angle)
+                x = int(cx + r * np.cos(rad))
+                y = int(cy + r * np.sin(rad))
 
-            if r < 120:
-                continue
-            if r < g * 1.6:
-                continue
-            if r < b * 1.6:
-                continue
+                if 0 <= x < edges.shape[1] and 0 <= y < edges.shape[0]:
+                    total_angles += 1
+                    if edges[y, x] > 0:
+                        angles_hit += 1
 
-            # Score candidate
-            score = (circularity * 0.5) + (fill_ratio * 0.2) + (area_ratio * 0.3)
+            ring_consistency = angles_hit / max(1, total_angles)
 
-            if score > best_score:
+            # ===================== FINAL FILTER =====================
+
+            score = (edge_ratio * 0.5) + (coverage * 0.2) + (ring_consistency * 0.3)
+
+            if (
+                0.35 <= coverage <= 0.95 and
+                edge_ratio >= 0.25 and
+                circularity >= 0.65 and
+                edge_density_inside <= 0.25 and
+                ring_consistency >= 0.4 and
+                score > best_score
+            ):
                 best_score = score
-                best = (cx, cy, radius)
+                best = (cx, cy, r)
 
-        if best is not None:
-            cx, cy, r = best
-            print(f"  - Circle accepted at ({cx}, {cy}) radius {r} (score={best_score:.2f})")
+        if best is None:
+            print("  - No reliable circles passed checks")
+            return
 
-            padding = int(round(r * 0.2))
+        cx, cy, r = best
+        print(f"  - Circle accepted at ({cx}, {cy}) radius {r} score={best_score:.2f}")
 
-            x_min = max(cx - r - padding, 0)
-            y_min = max(cy - r - padding, 0)
-            x_max = min(cx + r + padding, captured_frame.shape[1] - 1)
-            y_max = min(cy + r + padding, captured_frame.shape[0] - 1)
+        # ===================== CROP =====================
 
-            cropped = captured_frame[y_min:y_max + 1, x_min:x_max + 1]
+        pad = int(r * 0.2)
 
-            if cropped.size == 0:
-                print("  - WARNING: Cropped region empty")
-                return
+        x1 = max(cx - r - pad, 0)
+        y1 = max(cy - r - pad, 0)
+        x2 = min(cx + r + pad, bgr.shape[1] - 1)
+        y2 = min(cy + r + pad, bgr.shape[0] - 1)
 
-            output_path = output_folder / f"{image_path.stem}_cropped.png"
+        crop = img[y1:y2+1, x1:x2+1]
 
-            if cv2.imwrite(str(output_path), cropped):
-                print(f"  - Saved cropped image to {output_path}")
-                encrypt_image(output_path)
-            else:
-                print("  - Failed to write cropped image")
+        if crop.size == 0:
+            print("  - Empty crop")
+            return
+
+        out_path = output_folder / f"{image_path.stem}_cropped.png"
+
+        if cv2.imwrite(str(out_path), crop):
+            print(f"  - Saved cropped image to {out_path}")
+            encrypt_image(out_path)
         else:
-            print("  - No valid red circles found")
+            print("  - Failed to save image")
 
     except Exception as e:
-        print(f"Processing error for {image_path}: {e}")
+        print(f"Processing error: {e}")
 
 # ===================== MAIN =====================
 
 if __name__ == "__main__":
-    for image_path in image_files:
-        p = multiprocessing.Process(target=process_image, args=(image_path,))
-        p.start()
-        p.join(IMAGE_TIMEOUT)
 
-        if p.is_alive():
-            print(f"  - TIMEOUT: {image_path}")
-            p.terminate()
-            p.join()
+    mounts = get_mount_points()
+
+    if not mounts:
+        print("No mounted drives found")
+        exit()
+
+    print("Mounted drives:")
+    for m in mounts:
+        print(f"  - {m}")
+
+    print("--------------------------------------------------")
+
+    for mount in mounts:
+
+        print(f"\nScanning: {mount}")
+
+        images = sorted(mount.glob("*.png"))
+
+        if not images:
+            print("  - No PNG files found")
+            continue
+
+        print(f"  - Found {len(images)} images")
+
+        for path in images:
+            p = multiprocessing.Process(target=process_image, args=(path,))
+            p.start()
+            p.join(IMAGE_TIMEOUT)
+
+            if p.is_alive():
+                print(f"  - TIMEOUT: {path}")
+                p.terminate()
+                p.join()
