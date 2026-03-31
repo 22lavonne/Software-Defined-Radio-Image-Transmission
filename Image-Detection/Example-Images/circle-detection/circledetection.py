@@ -6,10 +6,14 @@ import math
 
 # ===================== CONFIG =====================
 
-STATIC_KEY = 123
+STATIC_KEY = 123  # Static key for XOR encryption
+IMAGE_TIMEOUT = 5  # seconds
 
+# Use script location as project root (NOT the USB)
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
+PROJECT_ROOT = SCRIPT_DIR
+
+# ===================== OUTPUT FOLDERS =====================
 
 output_folder = PROJECT_ROOT / "output"
 output_folder.mkdir(parents=True, exist_ok=True)
@@ -17,29 +21,26 @@ output_folder.mkdir(parents=True, exist_ok=True)
 encrypted_folder = output_folder / "encrypted"
 encrypted_folder.mkdir(parents=True, exist_ok=True)
 
-IMAGE_TIMEOUT = 5
+# ===================== SELECT FIRST MEDIA DRIVE =====================
 
-# Reject images that are mostly red-tinted (prevents full-red false positives)
-MAX_GLOBAL_RED_COVERAGE = 0.60
+media_base = Path("/media")
 
-# Ring-like targets should have more red on a thin ring than in a filled disk
-MAX_DISC_RED_RATIO = 0.55
-MIN_RING_TO_DISC_RED_RATIO = 1.35
+if not media_base.exists():
+    raise RuntimeError("/media does not exist")
 
-# ===================== MOUNTS =====================
+level1_dirs = sorted([p for p in media_base.iterdir() if p.is_dir()])
+if not level1_dirs:
+    raise RuntimeError("No directories found inside /media")
 
-def get_mount_points():
-    media_user_dir = Path("/media/ras1")
+first_level1 = level1_dirs[0]
 
-    if not media_user_dir.exists():
-        return []
+level2_dirs = sorted([p for p in first_level1.iterdir() if p.is_dir()])
+if not level2_dirs:
+    raise RuntimeError(f"No drives found inside {first_level1}")
 
-    subfolders = sorted(path for path in media_user_dir.iterdir() if path.is_dir())
-    if not subfolders:
-        return []
+USB_DRIVE = level2_dirs[0]
 
-    # Only use the first mounted folder under /media/ras1
-    return [subfolders[0]]
+print(f"Using drive: {USB_DRIVE}")
 
 # ===================== ENCRYPT =====================
 
@@ -92,14 +93,6 @@ def process_image(image_path):
         )
 
         mask = cv2.GaussianBlur(mask, (5, 5), 2)
-        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-
-        global_red_ratio = np.count_nonzero(mask) / mask.size
-        if global_red_ratio > MAX_GLOBAL_RED_COVERAGE:
-            print(
-                f"  - Skipped: image is mostly red (global red ratio {global_red_ratio:.2f})"
-            )
-            return
 
         # ===================== EDGES =====================
 
@@ -155,14 +148,6 @@ def process_image(image_path):
             red_on_ring = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=ring_band))
             red_ratio = red_on_ring / max(1, ring_area)
 
-            # Red coverage in almost full disk (used to reject fully filled red circles/images)
-            disc_fill = np.zeros(mask.shape, dtype=np.uint8)
-            cv2.circle(disc_fill, (cx, cy), int(r * 0.9), 255, -1)
-            disc_red = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=disc_fill))
-            disc_area = np.count_nonzero(disc_fill)
-            disc_red_ratio = disc_red / max(1, disc_area)
-            ring_to_disc_ratio = red_ratio / max(0.01, disc_red_ratio)
-
             # ===================== EMPTY INSIDE =====================
 
             inner_fill = np.zeros(mask.shape, dtype=np.uint8)
@@ -183,8 +168,6 @@ def process_image(image_path):
                 edge_ratio >= 0.20 and     # edge must exist on ring
                 red_ratio >= 0.25 and      # must actually be red ring
                 inside_ratio <= 0.20 and   # must be mostly empty
-                disc_red_ratio <= MAX_DISC_RED_RATIO and
-                ring_to_disc_ratio >= MIN_RING_TO_DISC_RED_RATIO and
                 score > best_score
             ):
                 best_score = score
@@ -224,28 +207,22 @@ def process_image(image_path):
 
 if __name__ == "__main__":
 
-    mounts = get_mount_points()
+    print(f"\nScanning: {USB_DRIVE}")
 
-    if not mounts:
-        print("No folders found in /media/ras1")
+    image_files = sorted(USB_DRIVE.glob("*.png"))
+
+    if not image_files:
+        print("  - No PNG files found")
         exit()
 
-    for mount in mounts:
+    print(f"  - Found {len(image_files)} images")
 
-        print(f"\nScanning: {mount}")
+    for path in image_files:
+        p = multiprocessing.Process(target=process_image, args=(path,))
+        p.start()
+        p.join(IMAGE_TIMEOUT)
 
-        images = sorted(mount.glob("*.png"))
-
-        if not images:
-            print("  - No PNG files found")
-            continue
-
-        for path in images:
-            p = multiprocessing.Process(target=process_image, args=(path,))
-            p.start()
-            p.join(IMAGE_TIMEOUT)
-
-            if p.is_alive():
-                print(f"  - TIMEOUT: {path}")
-                p.terminate()
-                p.join()
+        if p.is_alive():
+            print(f"  - TIMEOUT: {path}")
+            p.terminate()
+            p.join()
