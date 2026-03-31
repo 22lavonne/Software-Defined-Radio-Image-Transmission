@@ -107,7 +107,7 @@ def process_image(image_path):
             dp=1.2,
             minDist=50,
             param1=120,
-            param2=20,  # LESS strict
+            param2=18,  # slightly less strict
             minRadius=5,
             maxRadius=100
         )
@@ -165,9 +165,9 @@ def process_image(image_path):
             # ===================== FILTER =====================
 
             if (
-                edge_ratio >= 0.20 and     # edge must exist on ring
-                red_ratio >= 0.25 and      # must actually be red ring
-                inside_ratio <= 0.20 and   # must be mostly empty
+                edge_ratio >= 0.16 and     # allow a little less edge density
+                red_ratio >= 0.22 and      # allow slightly weaker red signal
+                inside_ratio <= 0.28 and   # allow a bit more interior red
                 score > best_score
             ):
                 best_score = score
