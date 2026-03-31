@@ -72,19 +72,23 @@ def detect_circles(red_mask):
     circles = np.round(circles[0, :]).astype(int)
     return [tuple(map(int, c)) for c in circles]
 
-# ===================== ENCRYPTION =====================
+# ===================== ENCRYPT =====================
 
 def encrypt_image(image_path):
     try:
         with open(image_path, 'rb') as fin:
             data = bytearray(fin.read())
+            data = bytearray(fin.read())
 
+        for i in range(len(data)):
+            data[i] ^= STATIC_KEY
         for i in range(len(data)):
             data[i] ^= STATIC_KEY
 
         encrypted_path = encrypted_folder / ("encrypted_" + image_path.name)
 
         with open(encrypted_path, 'wb') as fout:
+            fout.write(data)
             fout.write(data)
 
         print(f"    -> Encrypted: {encrypted_path}")
