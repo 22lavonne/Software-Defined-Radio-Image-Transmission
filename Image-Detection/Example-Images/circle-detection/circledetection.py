@@ -1,225 +1,166 @@
 from pathlib import Path
-import time
 import cv2
 import numpy as np
-import multiprocessing
-import math
 
 # ===================== CONFIG =====================
 
-STATIC_KEY = 123  # Static key for XOR encryption
+STATIC_KEY = 123  # XOR encryption key
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
+# Adjusted paths for your environment
+OUTPUT_BASE = Path("/home/ethanwoe/Software-Defined-Radio-Image-Transmission/output")
+INPUT_BASE = Path("/home/ethanwoe/Software-Defined-Radio-Image-Transmission/mock-images")
 
-# ===================== OUTPUT FOLDERS =====================
-
-output_folder = PROJECT_ROOT / "output"
+output_folder = OUTPUT_BASE
 output_folder.mkdir(parents=True, exist_ok=True)
 
 encrypted_folder = output_folder / "encrypted"
 encrypted_folder.mkdir(parents=True, exist_ok=True)
 
-# Per-image processing timeout (seconds)
-IMAGE_TIMEOUT = 5
+# ===================== RED DETECTION =====================
 
-# ===================== LINUX MOUNT DETECTION =====================
+def get_red_mask(image):
+    """
+    Creates a high-sensitivity binary mask for red objects.
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-def get_mount_points():
-    mount_points = []
+    # Widened Hue and lowered Saturation/Value for better detection in real-world lighting
+    lower_red1 = np.array([0, 200, 150], np.uint8)
+    upper_red1 = np.array([5, 255, 255], np.uint8)
+    
+    lower_red2 = np.array([175, 200, 150], np.uint8)
+    upper_red2 = np.array([180, 255, 255], np.uint8)
 
-    base_paths = [Path("/mnt"), Path("/media")]
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    red_mask = cv2.bitwise_or(mask1, mask2)
 
-    for base in base_paths:
-        if base.exists():
-            for path in base.iterdir():
-                if path.is_dir():
-                    mount_points.append(path)
+    # Morphological operations to solidify the circle shape
+    kernel = np.ones((7, 7), np.uint8)
+    
+    # Fill small holes inside the red area
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel)
+    
+    # Expand the red area slightly to ensure a strong outer edge for the detector
+    red_mask = cv2.dilate(red_mask, kernel, iterations=1)
 
-    return mount_points
+    return red_mask
+
+def detect_circles(red_mask):
+  
+    if red_mask is None or red_mask.size == 0:
+        return []
+
+    # Smooth the mask to remove jagged pixel edges
+    blurred_mask = cv2.GaussianBlur(red_mask, (9, 9), 2)
+
+    circles = cv2.HoughCircles(
+        blurred_mask,
+        cv2.HOUGH_GRADIENT,
+        dp=1,               # 1:1 resolution for maximum precision
+        minDist=blurred_mask.shape[0] // 4,
+        param1=100,           # Strict edge gradient requirement
+        param2=51,            # High accumulator threshold to avoid false positives
+        minRadius=15,
+        maxRadius=100
+    )
+
+    if circles is None:
+        return []
+
+    # Convert detected circles to integers for cropping/drawing
+    circles = np.round(circles[0, :]).astype(int)
+    return [tuple(map(int, c)) for c in circles]
 
 # ===================== ENCRYPTION =====================
 
 def encrypt_image(image_path):
     try:
         with open(image_path, 'rb') as fin:
-            image_data = fin.read()
+            data = bytearray(fin.read())
 
-        image_byte_array = bytearray(image_data)
-
-        for i in range(len(image_byte_array)):
-            image_byte_array[i] ^= STATIC_KEY
+        for i in range(len(data)):
+            data[i] ^= STATIC_KEY
 
         encrypted_path = encrypted_folder / ("encrypted_" + image_path.name)
 
         with open(encrypted_path, 'wb') as fout:
-            fout.write(image_byte_array)
+            fout.write(data)
 
-        print(f"  - Encrypted image saved to {encrypted_path}")
-
-    except Exception as e:
-        print(f"Encryption error: {e}")
-
-
-def process_image(image_path):
-    """Process a single image: detect a reliable circle, crop around it, save and encrypt.
-    This function is safe to run in a separate process for timeout control.
-    """
-    try:
-        print(f"\nProcessing: {image_path}")
-
-        captured_frame = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
-
-        if captured_frame is None:
-            print("  - Failed to load image, skipping")
-            return
-
-        output_frame = captured_frame.copy()
-
-        # Handle grayscale safely
-        if len(captured_frame.shape) == 2:
-            captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_GRAY2BGR)
-        elif captured_frame.shape[2] == 4:
-            captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_BGRA2BGR)
-        else:
-            captured_frame_bgr = captured_frame
-
-        captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, 3)
-        captured_frame_lab = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2Lab)
-
-        mask = cv2.inRange(
-            captured_frame_lab,
-            np.array([20, 150, 150]),
-            np.array([190, 255, 255])
-        )
-
-        mask = cv2.GaussianBlur(mask, (5, 5), 2, 2)
-
-        # Use slightly stricter Hough parameters (higher param2 => fewer false positives)
-        circles = cv2.HoughCircles(
-            mask,
-            cv2.HOUGH_GRADIENT,
-            1,
-            mask.shape[0] / 8,
-            param1=100,
-            param2=22,
-            minRadius=5,
-            maxRadius=60
-        )
-
-        if circles is not None:
-            circles = np.round(circles[0, :]).astype("int")
-
-            # Score circles by how strong edges are on their circumference and mask coverage
-            best = None
-            best_score = 0.0
-
-            edges = cv2.Canny(cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2GRAY), 50, 150)
-
-            for (cx, cy, r) in circles:
-                # reject circles too close to border
-                if cx - r < 0 or cy - r < 0 or cx + r >= captured_frame.shape[1] or cy + r >= captured_frame.shape[0]:
-                    continue
-
-                # Edge strength along circumference
-                circ_mask = np.zeros(edges.shape, dtype=np.uint8)
-                cv2.circle(circ_mask, (cx, cy), r, 255, 3)
-                edge_pixels = np.count_nonzero(cv2.bitwise_and(edges, edges, mask=circ_mask))
-                circumference = max(1.0, 2.0 * math.pi * r)
-                edge_ratio = edge_pixels / circumference
-
-                # Mask coverage inside circle
-                fill_mask = np.zeros(mask.shape, dtype=np.uint8)
-                cv2.circle(fill_mask, (cx, cy), r, 255, -1)
-                masked_inside = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=fill_mask))
-                circle_area = math.pi * (r ** 2)
-                coverage = masked_inside / max(1.0, circle_area)
-
-                # composite score
-                score = edge_ratio * 0.7 + coverage * 0.3
-
-                # debug print (optional)
-                # print(f"  - Circle ({cx},{cy},{r}) edge_ratio={edge_ratio:.2f} coverage={coverage:.2f} score={score:.2f}")
-
-                if edge_ratio >= 0.25 and coverage >= 0.30 and score > best_score:
-                    best_score = score
-                    best = (cx, cy, r)
-
-            if best is not None:
-                center_x, center_y, radius = best
-                print(f"  - Circle accepted at ({center_x}, {center_y}) radius {radius} (score={best_score:.2f})")
-
-                padding = int(round(radius * 0.2))
-
-                x_min = max(center_x - radius - padding, 0)
-                y_min = max(center_y - radius - padding, 0)
-                x_max = min(center_x + radius + padding, captured_frame.shape[1] - 1)
-                y_max = min(center_y + radius + padding, captured_frame.shape[0] - 1)
-
-                cropped_frame = captured_frame[y_min:y_max + 1, x_min:x_max + 1]
-
-                if cropped_frame.size == 0:
-                    print("  - WARNING: Cropped region empty")
-                    return
-
-                output_path = output_folder / f"{image_path.stem}_cropped.png"
-
-                if cv2.imwrite(str(output_path), cropped_frame):
-                    print(f"  - Saved cropped image to {output_path}")
-                    encrypt_image(output_path)
-                else:
-                    print("  - Failed to write cropped image")
-            else:
-                print("  - No reliable circles passed stricter checks")
-
-        else:
-            print("  - No circles detected")
-
-        # Do not attempt to display windows in subprocesses (may be headless)
-        try:
-            cv2.destroyAllWindows()
-        except Exception:
-            pass
+        print(f"    -> Encrypted: {encrypted_path}")
 
     except Exception as e:
-        print(f"Processing error for {image_path}: {e}")
+        print(f"    -> Encryption error: {e}")
+
+# ===================== INPUT =====================
+
+def get_input_images():
+    if not INPUT_BASE.exists() or not INPUT_BASE.is_dir():
+        return []
+    
+    patterns = ("*.png", "*.jpg", "*.jpeg")
+    image_files = []
+    for pattern in patterns:
+        image_files.extend(INPUT_BASE.rglob(pattern))
+    
+    return sorted(image_files)
 
 # ===================== MAIN =====================
 
 if __name__ == "__main__":
+    image_files = get_input_images()
 
-    mount_points = get_mount_points()
-
-    if not mount_points:
-        print("No mounted drives found in /mnt or /media")
+    if not image_files:
+        print(f"No images found in {INPUT_BASE}")
         exit()
 
-    print("Mounted drives found:")
-    for m in mount_points:
-        print(f"  - {m}")
+    print(f"Reading images from: {INPUT_BASE}")
+    print(f"Found {len(image_files)} images")
+    print("--------------------------------------------------\n")
 
-    print("--------------------------------------------------")
+    for idx, image_path in enumerate(image_files, 1):
+        print(f"{idx}/{len(image_files)}. Processing: {image_path}")
 
-    for mount in mount_points:
-
-        print(f"\nScanning root of: {mount}")
-
-
-        image_files = sorted(mount.glob("*.png"))
-
-        if not image_files:
-            print("  - No PNG images found in root")
+        image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image is None or image.size == 0:
+            print("  - Failed to load image")
             continue
 
-        print(f"  - Found {len(image_files)} images")
+        # 1. Detect Red
+        red_mask = get_red_mask(image)
 
-        for image_path in image_files:
+        if cv2.countNonZero(red_mask) < 50:
+            print("no red circle detected")
+            continue
 
-            # Run each image in a separate process and enforce a timeout
-            p = multiprocessing.Process(target=process_image, args=(image_path,))
-            p.start()
-            p.join(IMAGE_TIMEOUT)
-            if p.is_alive():
-                print(f"  - TIMEOUT: processing {image_path} exceeded {IMAGE_TIMEOUT}s, terminating")
-                p.terminate()
-                p.join()
+        # 2. Detect Circles directly from the mask
+        circles = detect_circles(red_mask)
+
+        if not circles:
+            print("no red circle detected")
+            continue
+
+        # Pick the best circle (largest radius)
+        x, y, r = max(circles, key=lambda c: c[2])
+        print("red circle detected")
+
+        # 3. Crop with safety bounds
+        y_min, y_max = max(y - r, 0), min(y + r, image.shape[0])
+        x_min, x_max = max(x - r, 0), min(x + r, image.shape[1])
+
+        cropped = image[y_min:y_max, x_min:x_max]
+
+        if cropped.size == 0:
+            print("  - Empty crop, skipping")
+            continue
+
+        # 4. Save and Encrypt
+        output_path = output_folder / f"{image_path.stem}_cropped.png"
+
+        if cv2.imwrite(str(output_path), cropped):
+            print(f"    -> Saved: {output_path}")
+            encrypt_image(output_path)
+        else:
+            print("  - Failed to save image")
+
+    print("\nDone.")
