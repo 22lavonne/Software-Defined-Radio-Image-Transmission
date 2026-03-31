@@ -148,26 +148,15 @@ def process_image(image_path):
             red_on_ring = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=ring_band))
             red_ratio = red_on_ring / max(1, ring_area)
 
-            # ===================== EMPTY INSIDE =====================
-
-            inner_fill = np.zeros(mask.shape, dtype=np.uint8)
-            cv2.circle(inner_fill, (cx, cy), int(r * 0.7), 255, -1)
-
-            inside_red = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=inner_fill))
-            inside_area = np.count_nonzero(inner_fill)
-
-            inside_ratio = inside_red / max(1, inside_area)
-
             # ===================== SCORE =====================
 
-            score = (edge_ratio * 0.5) + (red_ratio * 0.4) + ((1 - inside_ratio) * 0.1)
+            score = (edge_ratio * 0.55) + (red_ratio * 0.45)
 
             # ===================== FILTER =====================
 
             if (
                 edge_ratio >= 0.16 and     # allow a little less edge density
                 red_ratio >= 0.22 and      # allow slightly weaker red signal
-                inside_ratio <= 0.28 and   # allow a bit more interior red
                 score > best_score
             ):
                 best_score = score
