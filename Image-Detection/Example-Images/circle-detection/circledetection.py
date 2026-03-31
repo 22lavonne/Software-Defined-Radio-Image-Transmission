@@ -29,13 +29,17 @@ MIN_RING_TO_DISC_RED_RATIO = 1.35
 # ===================== MOUNTS =====================
 
 def get_mount_points():
-    mount_points = []
-    for base in [Path("/mnt"), Path("/media")]:
-        if base.exists():
-            for path in base.iterdir():
-                if path.is_dir():
-                    mount_points.append(path)
-    return mount_points
+    media_user_dir = Path("/media/ras1")
+
+    if not media_user_dir.exists():
+        return []
+
+    subfolders = sorted(path for path in media_user_dir.iterdir() if path.is_dir())
+    if not subfolders:
+        return []
+
+    # Only use the first mounted folder under /media/ras1
+    return [subfolders[0]]
 
 # ===================== ENCRYPT =====================
 
@@ -223,7 +227,7 @@ if __name__ == "__main__":
     mounts = get_mount_points()
 
     if not mounts:
-        print("No mounted drives found")
+        print("No folders found in /media/ras1")
         exit()
 
     for mount in mounts:
