@@ -1,5 +1,4 @@
 from pathlib import Path
-import time
 import cv2
 import numpy as np
 import multiprocessing
@@ -7,12 +6,10 @@ import math
 
 # ===================== CONFIG =====================
 
-STATIC_KEY = 123  # Static key for XOR encryption
+STATIC_KEY = 123
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
-
-# ===================== OUTPUT FOLDERS =====================
 
 output_folder = PROJECT_ROOT / "output"
 output_folder.mkdir(parents=True, exist_ok=True)
@@ -22,7 +19,7 @@ encrypted_folder.mkdir(parents=True, exist_ok=True)
 
 IMAGE_TIMEOUT = 5
 
-# ===================== LINUX MOUNT DETECTION =====================
+# ===================== MOUNTS =====================
 
 def get_mount_points():
     mount_points = []
@@ -33,7 +30,7 @@ def get_mount_points():
                     mount_points.append(path)
     return mount_points
 
-# ===================== ENCRYPTION =====================
+# ===================== ENCRYPT =====================
 
 def encrypt_image(image_path):
     try:
@@ -53,7 +50,7 @@ def encrypt_image(image_path):
     except Exception as e:
         print(f"Encryption error: {e}")
 
-# ===================== IMAGE PROCESSING =====================
+# ===================== PROCESS =====================
 
 def process_image(image_path):
     try:
@@ -64,7 +61,7 @@ def process_image(image_path):
             print("  - Failed to load image")
             return
 
-        # Normalize channels
+        # Normalize
         if len(img.shape) == 2:
             bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         elif img.shape[2] == 4:
@@ -72,42 +69,35 @@ def process_image(image_path):
         else:
             bgr = img
 
-        bgr = cv2.medianBlur(bgr, 3)
+        bgr = cv2.GaussianBlur(bgr, (5, 5), 1)
 
-        # ===================== COLOR MASK =====================
-
-        lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2Lab)
-        lab_mask = cv2.inRange(
-            lab,
-            np.array([30, 160, 160]),
-            np.array([180, 255, 255])
-        )
+        # ===================== RED MASK =====================
 
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
-        lower_red1 = np.array([0, 120, 120])
-        upper_red1 = np.array([10, 255, 255])
+        mask = (
+            cv2.inRange(hsv, (0, 100, 100), (10, 255, 255)) |
+            cv2.inRange(hsv, (170, 100, 100), (180, 255, 255))
+        )
 
-        lower_red2 = np.array([170, 120, 120])
-        upper_red2 = np.array([180, 255, 255])
-
-        hsv_mask = cv2.inRange(hsv, lower_red1, upper_red1) | \
-                   cv2.inRange(hsv, lower_red2, upper_red2)
-
-        mask = cv2.bitwise_and(lab_mask, hsv_mask)
         mask = cv2.GaussianBlur(mask, (5, 5), 2)
 
-        # ===================== CIRCLE DETECTION =====================
+        # ===================== EDGES =====================
+
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+
+        # ===================== HOUGH =====================
 
         circles = cv2.HoughCircles(
-            mask,
+            edges,
             cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=mask.shape[0] / 6,
+            dp=1.2,
+            minDist=50,
             param1=120,
-            param2=28,  # slightly less strict
+            param2=20,  # LESS strict
             minRadius=5,
-            maxRadius=80
+            maxRadius=100
         )
 
         if circles is None:
@@ -115,8 +105,6 @@ def process_image(image_path):
             return
 
         circles = np.round(circles[0, :]).astype("int")
-
-        edges = cv2.Canny(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), 50, 150)
 
         best = None
         best_score = 0
@@ -126,89 +114,59 @@ def process_image(image_path):
             if cx - r < 0 or cy - r < 0 or cx + r >= bgr.shape[1] or cy + r >= bgr.shape[0]:
                 continue
 
-            # ===================== EDGE RATIO =====================
+            # ===================== RING BAND =====================
 
-            circ_mask = np.zeros(edges.shape, dtype=np.uint8)
-            cv2.circle(circ_mask, (cx, cy), r, 255, 3)
+            outer = np.zeros(mask.shape, dtype=np.uint8)
+            inner = np.zeros(mask.shape, dtype=np.uint8)
 
-            edge_pixels = np.count_nonzero(cv2.bitwise_and(edges, edges, mask=circ_mask))
-            circumference = max(1.0, 2 * math.pi * r)
-            edge_ratio = edge_pixels / circumference
+            cv2.circle(outer, (cx, cy), r + 2, 255, -1)
+            cv2.circle(inner, (cx, cy), r - 2, 255, -1)
 
-            # ===================== COVERAGE =====================
+            ring_band = cv2.subtract(outer, inner)
 
-            fill_mask = np.zeros(mask.shape, dtype=np.uint8)
-            cv2.circle(fill_mask, (cx, cy), r, 255, -1)
+            # ===================== EDGE ON RING =====================
 
-            masked_inside = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=fill_mask))
-            circle_area = math.pi * r * r
-            coverage = masked_inside / max(1.0, circle_area)
+            ring_edges = np.count_nonzero(cv2.bitwise_and(edges, edges, mask=ring_band))
+            ring_area = np.count_nonzero(ring_band)
 
-            # Allow filled circles but reject extreme blobs
-            if coverage > 0.95:
-                continue
+            edge_ratio = ring_edges / max(1, ring_area)
 
-            # ===================== INNER EDGE NOISE =====================
+            # ===================== RED ON RING =====================
 
-            inner_edges = np.count_nonzero(cv2.bitwise_and(edges, edges, mask=fill_mask))
-            edge_density_inside = inner_edges / max(1.0, circle_area)
+            red_on_ring = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=ring_band))
+            red_ratio = red_on_ring / max(1, ring_area)
 
-            # ===================== CIRCULARITY =====================
+            # ===================== EMPTY INSIDE =====================
 
-            contours, _ = cv2.findContours(
-                cv2.bitwise_and(mask, fill_mask),
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE
-            )
+            inner_fill = np.zeros(mask.shape, dtype=np.uint8)
+            cv2.circle(inner_fill, (cx, cy), int(r * 0.7), 255, -1)
 
-            circularity = 0
+            inside_red = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=inner_fill))
+            inside_area = np.count_nonzero(inner_fill)
 
-            if contours:
-                cnt = max(contours, key=cv2.contourArea)
-                area = cv2.contourArea(cnt)
-                perimeter = cv2.arcLength(cnt, True)
+            inside_ratio = inside_red / max(1, inside_area)
 
-                if perimeter > 0:
-                    circularity = 4 * math.pi * area / (perimeter ** 2)
+            # ===================== SCORE =====================
 
-            # ===================== RING CONSISTENCY =====================
+            score = (edge_ratio * 0.5) + (red_ratio * 0.4) + ((1 - inside_ratio) * 0.1)
 
-            angles_hit = 0
-            total_angles = 0
-
-            for angle in range(0, 360, 10):
-                rad = np.deg2rad(angle)
-                x = int(cx + r * np.cos(rad))
-                y = int(cy + r * np.sin(rad))
-
-                if 0 <= x < edges.shape[1] and 0 <= y < edges.shape[0]:
-                    total_angles += 1
-                    if edges[y, x] > 0:
-                        angles_hit += 1
-
-            ring_consistency = angles_hit / max(1, total_angles)
-
-            # ===================== FINAL FILTER =====================
-
-            score = (edge_ratio * 0.5) + (coverage * 0.2) + (ring_consistency * 0.3)
+            # ===================== FILTER =====================
 
             if (
-                0.35 <= coverage <= 0.95 and
-                edge_ratio >= 0.25 and
-                circularity >= 0.65 and
-                edge_density_inside <= 0.25 and
-                ring_consistency >= 0.4 and
+                edge_ratio >= 0.20 and     # edge must exist on ring
+                red_ratio >= 0.25 and      # must actually be red ring
+                inside_ratio <= 0.20 and   # must be mostly empty
                 score > best_score
             ):
                 best_score = score
                 best = (cx, cy, r)
 
         if best is None:
-            print("  - No reliable circles passed checks")
+            print("  - No valid ring circles found")
             return
 
         cx, cy, r = best
-        print(f"  - Circle accepted at ({cx}, {cy}) radius {r} score={best_score:.2f}")
+        print(f"  - Ring circle detected at ({cx},{cy}) r={r} score={best_score:.2f}")
 
         # ===================== CROP =====================
 
@@ -222,7 +180,6 @@ def process_image(image_path):
         crop = img[y1:y2+1, x1:x2+1]
 
         if crop.size == 0:
-            print("  - Empty crop")
             return
 
         out_path = output_folder / f"{image_path.stem}_cropped.png"
@@ -230,8 +187,6 @@ def process_image(image_path):
         if cv2.imwrite(str(out_path), crop):
             print(f"  - Saved cropped image to {out_path}")
             encrypt_image(out_path)
-        else:
-            print("  - Failed to save image")
 
     except Exception as e:
         print(f"Processing error: {e}")
@@ -246,12 +201,6 @@ if __name__ == "__main__":
         print("No mounted drives found")
         exit()
 
-    print("Mounted drives:")
-    for m in mounts:
-        print(f"  - {m}")
-
-    print("--------------------------------------------------")
-
     for mount in mounts:
 
         print(f"\nScanning: {mount}")
@@ -261,8 +210,6 @@ if __name__ == "__main__":
         if not images:
             print("  - No PNG files found")
             continue
-
-        print(f"  - Found {len(images)} images")
 
         for path in images:
             p = multiprocessing.Process(target=process_image, args=(path,))
