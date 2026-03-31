@@ -19,6 +19,13 @@ encrypted_folder.mkdir(parents=True, exist_ok=True)
 
 IMAGE_TIMEOUT = 5
 
+# Reject images that are mostly red-tinted (prevents full-red false positives)
+MAX_GLOBAL_RED_COVERAGE = 0.60
+
+# Ring-like targets should have more red on a thin ring than in a filled disk
+MAX_DISC_RED_RATIO = 0.55
+MIN_RING_TO_DISC_RED_RATIO = 1.35
+
 # ===================== MOUNTS =====================
 
 def get_mount_points():
@@ -81,6 +88,14 @@ def process_image(image_path):
         )
 
         mask = cv2.GaussianBlur(mask, (5, 5), 2)
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+
+        global_red_ratio = np.count_nonzero(mask) / mask.size
+        if global_red_ratio > MAX_GLOBAL_RED_COVERAGE:
+            print(
+                f"  - Skipped: image is mostly red (global red ratio {global_red_ratio:.2f})"
+            )
+            return
 
         # ===================== EDGES =====================
 
@@ -136,6 +151,14 @@ def process_image(image_path):
             red_on_ring = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=ring_band))
             red_ratio = red_on_ring / max(1, ring_area)
 
+            # Red coverage in almost full disk (used to reject fully filled red circles/images)
+            disc_fill = np.zeros(mask.shape, dtype=np.uint8)
+            cv2.circle(disc_fill, (cx, cy), int(r * 0.9), 255, -1)
+            disc_red = np.count_nonzero(cv2.bitwise_and(mask, mask, mask=disc_fill))
+            disc_area = np.count_nonzero(disc_fill)
+            disc_red_ratio = disc_red / max(1, disc_area)
+            ring_to_disc_ratio = red_ratio / max(0.01, disc_red_ratio)
+
             # ===================== EMPTY INSIDE =====================
 
             inner_fill = np.zeros(mask.shape, dtype=np.uint8)
@@ -156,6 +179,8 @@ def process_image(image_path):
                 edge_ratio >= 0.20 and     # edge must exist on ring
                 red_ratio >= 0.25 and      # must actually be red ring
                 inside_ratio <= 0.20 and   # must be mostly empty
+                disc_red_ratio <= MAX_DISC_RED_RATIO and
+                ring_to_disc_ratio >= MIN_RING_TO_DISC_RED_RATIO and
                 score > best_score
             ):
                 best_score = score
