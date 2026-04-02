@@ -6,15 +6,37 @@ import numpy as np
 
 STATIC_KEY = 123  # XOR encryption key
 
-# Adjusted paths for your environment
-OUTPUT_BASE = Path("/home/ethanwoe/Software-Defined-Radio-Image-Transmission/output")
-INPUT_BASE = Path("/home/ethanwoe/Software-Defined-Radio-Image-Transmission/mock-images")
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR
 
-output_folder = OUTPUT_BASE
+# ===================== OUTPUT FOLDERS =====================
+
+output_folder = PROJECT_ROOT / "output"
 output_folder.mkdir(parents=True, exist_ok=True)
 
 encrypted_folder = output_folder / "encrypted"
 encrypted_folder.mkdir(parents=True, exist_ok=True)
+
+# ===================== SELECT FIRST MEDIA DRIVE =====================
+
+media_base = Path("/media")
+
+if not media_base.exists():
+    raise RuntimeError("/media does not exist")
+
+level1_dirs = sorted([p for p in media_base.iterdir() if p.is_dir()])
+if not level1_dirs:
+    raise RuntimeError("No directories found inside /media")
+
+first_level1 = level1_dirs[0]
+
+level2_dirs = sorted([p for p in first_level1.iterdir() if p.is_dir()])
+if not level2_dirs:
+    raise RuntimeError(f"No drives found inside {first_level1}")
+
+USB_DRIVE = level2_dirs[0]
+
+print(f"Using drive: {USB_DRIVE}")
 
 # ===================== RED DETECTION =====================
 
